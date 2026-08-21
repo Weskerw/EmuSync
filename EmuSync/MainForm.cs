@@ -1,5 +1,4 @@
 using EmuSync.Core;
-using Microsoft.Win32;
 
 namespace EmuSync;
 
@@ -107,13 +106,13 @@ public class MainForm : Form
         var startWithWindows = new ToolStripMenuItem("Start with Windows")
         {
             CheckOnClick = true,
-            Checked = IsStartupEnabled()
+            Checked = StartupManager.IsEnabled()
         };
         startWithWindows.CheckedChanged += (_, _) =>
         {
             try
             {
-                SetStartup(startWithWindows.Checked);
+                StartupManager.SetEnabled(startWithWindows.Checked);
                 Log(startWithWindows.Checked
                     ? "EmuSync will start automatically with Windows."
                     : "Automatic startup with Windows disabled.");
@@ -225,33 +224,6 @@ public class MainForm : Form
         {
             SetBusy(false);
         }
-    }
-
-    // "Start with Windows" via the per-user Run registry key (no admin rights needed).
-    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    private const string RunValueName = "EmuSync";
-
-    private static bool IsStartupEnabled()
-    {
-        try
-        {
-            using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-            return key?.GetValue(RunValueName) != null;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static void SetStartup(bool enable)
-    {
-        using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath)
-            ?? throw new InvalidOperationException("Cannot open the Windows startup registry key.");
-        if (enable)
-            key.SetValue(RunValueName, $"\"{Application.ExecutablePath}\" --minimized");
-        else
-            key.DeleteValue(RunValueName, false);
     }
 
     private async Task ChangeAccountAsync()

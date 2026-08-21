@@ -21,6 +21,7 @@ public class FirstRunWizard : Form
     // Step 2 controls
     private readonly ListBox _folderList = new();
     private readonly Button _btnAddFolder = new();
+    private readonly CheckBox _chkStartup = new();
 
     private int _step;
 
@@ -46,10 +47,14 @@ public class FirstRunWizard : Form
         _btnSignIn.Click += async (_, _) => await SignInAsync();
         _signInStatus.SetBounds(210, 151, 290, 60);
 
-        _folderList.SetBounds(20, 140, 360, 130);
+        _folderList.SetBounds(20, 140, 360, 110);
         _btnAddFolder.Text = "Add folder...";
         _btnAddFolder.SetBounds(390, 140, 110, 32);
         _btnAddFolder.Click += (_, _) => AddFolder();
+
+        _chkStartup.Text = "Start EmuSync automatically with Windows (in the tray)";
+        _chkStartup.SetBounds(20, 258, 480, 24);
+        _chkStartup.Checked = true;
 
         _btnNext.SetBounds(320, 295, 90, 30);
         _btnNext.Click += (_, _) => NextStep();
@@ -59,7 +64,7 @@ public class FirstRunWizard : Form
 
         Controls.AddRange(new Control[]
         {
-            _title, _body, _btnSignIn, _signInStatus, _folderList, _btnAddFolder, _btnNext, _btnCancel
+            _title, _body, _btnSignIn, _signInStatus, _folderList, _btnAddFolder, _chkStartup, _btnNext, _btnCancel
         });
 
         ShowStep(0);
@@ -69,7 +74,7 @@ public class FirstRunWizard : Form
     {
         _step = step;
         _btnSignIn.Visible = _signInStatus.Visible = step == 1;
-        _folderList.Visible = _btnAddFolder.Visible = step == 2;
+        _folderList.Visible = _btnAddFolder.Visible = _chkStartup.Visible = step == 2;
 
         switch (step)
         {
@@ -105,6 +110,17 @@ public class FirstRunWizard : Form
             ShowStep(_step + 1);
             return;
         }
+
+        // Finish: apply the "Start with Windows" choice.
+        try
+        {
+            StartupManager.SetEnabled(_chkStartup.Checked);
+        }
+        catch
+        {
+            // Non-fatal: the option can still be toggled later from the Settings menu.
+        }
+
         DialogResult = DialogResult.OK;
         Close();
     }
