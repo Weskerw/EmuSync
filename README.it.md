@@ -9,6 +9,18 @@ Per ogni cartella configurata, EmuSync confronta i file locali con quelli su Dri
 nulla, altrimenti vince il file con la data di modifica più recente, in entrambe
 le direzioni.
 
+## Download
+
+Scarica l'ultimo `EmuSync.exe` dalla
+[pagina Releases](https://github.com/Weskerw/EmuSync/releases/latest).
+
+È un singolo eseguibile self-contained: nessun installer e nessun runtime .NET
+da installare. Lo avvii e accedi con Google.
+
+> Windows SmartScreen potrebbe mostrare "Windows ha protetto il PC" perché
+> l'eseguibile non ha firma digitale. Clicca **Ulteriori informazioni →
+> Esegui comunque**.
+
 ## Funzionalità
 
 - Profili multipli: una cartella per emulatore (PCSX2, Dolphin, ...), sottocartelle incluse

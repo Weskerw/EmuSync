@@ -9,6 +9,17 @@ For each configured folder, EmuSync compares local files with those on Drive
 nothing, otherwise the file with the most recent modification time wins, in
 both directions.
 
+## Download
+
+Grab the latest `EmuSync.exe` from the
+[Releases page](https://github.com/Weskerw/EmuSync/releases/latest).
+
+It is a single self-contained executable: no installer and no .NET runtime
+required. Just run it and sign in with Google.
+
+> Windows SmartScreen may show "Windows protected your PC" because the
+> executable is not code-signed. Click **More info → Run anyway**.
+
 ## Features
 
 - Multiple profiles: one folder per emulator (PCSX2, Dolphin, ...), subfolders included
