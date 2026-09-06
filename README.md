@@ -87,8 +87,8 @@ may see an "unverified app" warning they can bypass via
    (e.g. PCSX2's `memcards`, Dolphin's `GC`/`Wii`, etc.) and give it a name.
 3. Add as many folders as you want, one per emulator.
 4. Everything else is automatic: sync on startup, when saves change, and
-   periodically to pick up remote changes. Manual **Sync selected** /
-   **Sync all** buttons are also available. The log shows every operation.
+   periodically to pick up remote changes. The **Sync** menu also has manual
+   **Sync selected** (F5) and **Sync all** (Ctrl+F5). The log shows every operation.
 
 On Drive, files end up in `My Drive/EmuSync/<ProfileName>/...`,
 subfolders included.
@@ -131,3 +131,7 @@ is committed with empty strings and `credentials.json` is in `.gitignore`.
   propagated: the safest choice for save files).
 - Future Linux desktop support only needs a new UI (Avalonia/GTK) on top of
   `EmuSync.Core`; Android will also need a dedicated OAuth flow.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

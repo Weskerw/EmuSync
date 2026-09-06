@@ -90,8 +90,8 @@ superabile con *Avanzate → Vai a EmuSync*.
    (es. `memcards` di PCSX2, `GC`/`Wii` di Dolphin, ecc.) e dalle un nome.
 3. Puoi aggiungere quante cartelle vuoi, una per emulatore.
 4. Il resto è automatico: sync all'avvio, quando i salvataggi cambiano e
-   periodicamente per le modifiche remote. Restano i pulsanti manuali
-   **Sync selected** / **Sync all**. Il log mostra ogni operazione.
+   periodicamente per le modifiche remote. Nel menu **Sync** restano i comandi
+   manuali **Sync selected** (F5) e **Sync all** (Ctrl+F5). Il log mostra ogni operazione.
 
 Su Drive i file finiscono in `Il mio Drive/EmuSync/<NomeProfilo>/...`,
 sottocartelle comprese.
@@ -133,3 +133,7 @@ committato con le stringhe vuote e `credentials.json` è nel `.gitignore`.
   non vengono propagate: per i salvataggi è la scelta più sicura).
 - Il futuro supporto Linux desktop richiede solo una nuova UI (Avalonia/GTK)
   sopra `EmuSync.Core`; per Android servirà anche un flusso OAuth dedicato.
+
+## Licenza
+
+MIT — vedi [LICENSE](LICENSE).
