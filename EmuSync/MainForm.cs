@@ -2,18 +2,15 @@ using EmuSync.Core;
 
 namespace EmuSync;
 
-public class MainForm : Form
+/// <summary>
+/// Main window. The visual part (menu, list, log, tray icon, timers) lives in
+/// MainForm.Designer.cs so it can be opened in the Visual Studio designer;
+/// this file only holds the behaviour.
+/// </summary>
+public partial class MainForm : Form
 {
     private readonly AppConfig _config = AppConfig.Load();
     private readonly GoogleDriveClient _drive = new();
-
-    private readonly ListView _list = new();
-    private readonly TextBox _log = new();
-    private readonly Button _btnAdd = new();
-    private readonly Button _btnRemove = new();
-    private readonly Button _btnSyncSelected = new();
-    private readonly Button _btnSyncAll = new();
-    private readonly CheckBox _chkAuto = new();
 
     // Automatic sync: one watcher per folder (event-driven, ~zero cost)
     // + quiet period so we don't sync while the emulator is still writing.
@@ -21,99 +18,51 @@ public class MainForm : Form
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly HashSet<SyncProfile> _dirtyProfiles = new();
     private DateTime _lastChangeUtc;
-    private readonly System.Windows.Forms.Timer _autoSyncTimer = new() { Interval = 10_000 };
-    private readonly System.Windows.Forms.Timer _remoteCheckTimer = new();
     private bool _syncing;
 
-    // System tray icon; when launched with --minimized (Start with Windows) the
-    // window stays hidden and the app lives in the tray.
-    private readonly NotifyIcon _tray = new();
+    // When launched with --minimized (Start with Windows) the window stays
+    // hidden and the app lives in the tray.
     private readonly bool _startMinimized;
+
+    /// <summary>Set when Google refused the stored token: timer-driven syncs pause
+    /// until the user signs in again from a Sync button.</summary>
+    private bool _needsSignIn;
     private readonly bool _firstRun = !AppConfig.ConfigFileExists;
 
-    public MainForm(bool startMinimized = false)
+    /// <summary>Parameterless constructor required by the Visual Studio designer.</summary>
+    public MainForm() : this(false) { }
+
+    public MainForm(bool startMinimized)
     {
+        InitializeComponent();
+
         _startMinimized = startMinimized;
-        Text = "EmuSync – Sync emulator saves with Google Drive";
-        MinimumSize = new Size(720, 480);
-        StartPosition = FormStartPosition.CenterScreen;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { /* keep default */ }
 
-        _list.View = View.Details;
-        _list.FullRowSelect = true;
-        _list.MultiSelect = false;
-        _list.Dock = DockStyle.Fill;
-        _list.Columns.Add("Profile", 150);
-        _list.Columns.Add("Local folder", 330);
-        _list.Columns.Add("Last sync", 160);
+        // --- "Sync" menu ---
+        _miAdd.Click += (_, _) => AddProfile();
+        _miRemove.Click += (_, _) => RemoveProfile();
+        _miSyncSelected.Click += async (_, _) => await SyncAsync(onlySelected: true);
+        _miSyncAll.Click += async (_, _) => await SyncAsync(onlySelected: false);
 
-        _btnAdd.Text = "Add folder...";
-        _btnRemove.Text = "Remove";
-        _btnSyncSelected.Text = "Sync selected";
-        _btnSyncAll.Text = "Sync all";
-
-        _btnAdd.Click += (_, _) => AddProfile();
-        _btnRemove.Click += (_, _) => RemoveProfile();
-        _btnSyncSelected.Click += async (_, _) => await SyncAsync(onlySelected: true);
-        _btnSyncAll.Click += async (_, _) => await SyncAsync(onlySelected: false);
-
-        var buttons = new FlowLayoutPanel
+        _miAuto.Checked = _config.AutoSync; // set before subscribing: no spurious log line
+        _miAuto.CheckedChanged += (_, _) =>
         {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            Padding = new Padding(4)
-        };
-        foreach (var b in new[] { _btnAdd, _btnRemove, _btnSyncSelected, _btnSyncAll })
-        {
-            b.AutoSize = true;
-            buttons.Controls.Add(b);
-        }
-
-        _chkAuto.Text = "Auto-sync when saves change";
-        _chkAuto.AutoSize = true;
-        _chkAuto.Margin = new Padding(12, 6, 3, 3);
-        _chkAuto.Checked = _config.AutoSync;
-        _chkAuto.CheckedChanged += (_, _) =>
-        {
-            _config.AutoSync = _chkAuto.Checked;
+            _config.AutoSync = _miAuto.Checked;
             _config.Save();
-            Log(_chkAuto.Checked ? "Auto-sync enabled." : "Auto-sync disabled.");
+            Log(_miAuto.Checked ? "Auto-sync enabled." : "Auto-sync disabled.");
         };
-        buttons.Controls.Add(_chkAuto);
 
-        _log.Multiline = true;
-        _log.ReadOnly = true;
-        _log.ScrollBars = ScrollBars.Vertical;
-        _log.Dock = DockStyle.Fill;
-        _log.Font = new Font(FontFamily.GenericMonospace, 9f);
+        // --- "Settings" menu ---
+        _miChangeAccount.Click += async (_, _) => await ChangeAccountAsync();
 
-        var split = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal
-        };
-        split.Panel1.Controls.Add(_list);
-        split.Panel2.Controls.Add(_log);
-        // Set after layout, otherwise it may exceed the container's limits.
-        Shown += (_, _) => { if (split.Height > 120) split.SplitterDistance = split.Height / 2; };
-
-        var menu = new MenuStrip();
-        var settingsMenu = new ToolStripMenuItem("Settings");
-        var changeAccount = new ToolStripMenuItem("Change Google account...");
-        changeAccount.Click += async (_, _) => await ChangeAccountAsync();
-        settingsMenu.DropDownItems.Add(changeAccount);
-
-        var startWithWindows = new ToolStripMenuItem("Start with Windows")
-        {
-            CheckOnClick = true,
-            Checked = StartupManager.IsEnabled()
-        };
-        startWithWindows.CheckedChanged += (_, _) =>
+        _miStartWithWindows.Checked = StartupManager.IsEnabled();
+        _miStartWithWindows.CheckedChanged += (_, _) =>
         {
             try
             {
-                StartupManager.SetEnabled(startWithWindows.Checked);
-                Log(startWithWindows.Checked
+                StartupManager.SetEnabled(_miStartWithWindows.Checked);
+                Log(_miStartWithWindows.Checked
                     ? "EmuSync will start automatically with Windows."
                     : "Automatic startup with Windows disabled.");
             }
@@ -122,14 +71,10 @@ public class MainForm : Form
                 Log("ERROR (startup setting): " + ex.Message);
             }
         };
-        settingsMenu.DropDownItems.Add(startWithWindows);
 
-        menu.Items.Add(settingsMenu);
-        MainMenuStrip = menu;
-
-        Controls.Add(split);
-        Controls.Add(buttons);
-        Controls.Add(menu);
+        // Split the window evenly after layout: doing it in the designer may
+        // exceed the container's limits at other DPI/sizes.
+        Shown += (_, _) => { if (_split.Height > 120) _split.SplitterDistance = _split.Height / 2; };
 
         RefreshList();
         RebuildWatchers();
@@ -145,17 +90,12 @@ public class MainForm : Form
             _remoteCheckTimer.Start();
         }
 
-        // System tray icon with quick actions.
+        // --- System tray icon with quick actions ---
         _tray.Icon = Icon ?? SystemIcons.Application;
-        _tray.Text = "EmuSync";
-        var trayMenu = new ContextMenuStrip();
-        trayMenu.Items.Add("Open EmuSync", null, (_, _) => ShowFromTray());
-        trayMenu.Items.Add("Sync all now", null, async (_, _) => await SyncAsync(onlySelected: false));
-        trayMenu.Items.Add(new ToolStripSeparator());
-        trayMenu.Items.Add("Exit", null, (_, _) => Close());
-        _tray.ContextMenuStrip = trayMenu;
+        _trayOpen.Click += (_, _) => ShowFromTray();
+        _traySyncAll.Click += async (_, _) => await SyncAsync(onlySelected: false);
+        _trayExit.Click += (_, _) => Close();
         _tray.DoubleClick += (_, _) => ShowFromTray();
-        _tray.Visible = true;
 
         if (_startMinimized)
         {
@@ -213,7 +153,9 @@ public class MainForm : Form
             }
 
             Log("Automatic sync on startup...");
-            await RunSyncAsync(_config.Profiles.ToList());
+            // Started minimized (Windows startup): don't pop the browser in the
+            // user's face, just warn if the sign-in has expired.
+            await RunSyncAsync(_config.Profiles.ToList(), interactive: !_startMinimized);
         }
         catch (Exception ex)
         {
@@ -313,6 +255,7 @@ public class MainForm : Form
         if (!_config.AutoSync || _syncing || _config.Profiles.Count == 0) return;
         // Never open the browser from a timer: only if already connected or with a stored token.
         if (!_drive.IsConnected && !GoogleDriveClient.HasStoredToken) return;
+        if (_needsSignIn) return; // waiting for the user to sign in again
         // If there are fresh local changes (emulator writing), let the local
         // auto-sync handle them and try again on the next tick.
         if (_dirtyProfiles.Count > 0) return;
@@ -322,7 +265,7 @@ public class MainForm : Form
         {
             await EnsureConnectedAsync();
             Log("Periodic Google Drive check...");
-            await RunSyncAsync(_config.Profiles.ToList());
+            await RunSyncAsync(_config.Profiles.ToList(), interactive: false);
         }
         catch (Exception ex)
         {
@@ -337,6 +280,7 @@ public class MainForm : Form
     private async Task AutoSyncTickAsync()
     {
         if (!_config.AutoSync || _syncing || _dirtyProfiles.Count == 0) return;
+        if (_needsSignIn) return; // waiting for the user to sign in again
         if (DateTime.UtcNow - _lastChangeUtc < QuietPeriod) return; // wait for the folder to settle
 
         var targets = _dirtyProfiles.ToList();
@@ -347,7 +291,7 @@ public class MainForm : Form
         {
             await EnsureConnectedAsync();
             Log($"Changes detected in {targets.Count} profile(s): automatic sync...");
-            await RunSyncAsync(targets);
+            await RunSyncAsync(targets, interactive: false);
         }
         catch (Exception ex)
         {
@@ -476,41 +420,108 @@ public class MainForm : Form
         }
     }
 
+    private static string CredentialsPath => Path.Combine(AppContext.BaseDirectory, "credentials.json");
+
     private async Task EnsureConnectedAsync()
     {
         if (_drive.IsConnected) return;
         Log(GoogleDriveClient.HasStoredToken
             ? "Connecting to Google Drive..."
             : "Connecting to Google Drive: your browser will open for sign-in...");
-        await _drive.ConnectAsync(Path.Combine(AppContext.BaseDirectory, "credentials.json"));
+        await _drive.ConnectAsync(CredentialsPath);
+        _needsSignIn = false;
         Log("Connected.");
     }
 
-    private async Task RunSyncAsync(List<SyncProfile> targets)
+    /// <summary>
+    /// Runs the sync. If Google rejects the stored token ('invalid_grant': expired
+    /// or revoked), signs in again once and retries the profile.
+    /// <paramref name="interactive"/> is false for timer-driven syncs, where the
+    /// browser must not pop up unannounced: there we just warn and stop retrying
+    /// until the user syncs manually.
+    /// </summary>
+    private async Task RunSyncAsync(List<SyncProfile> targets, bool interactive = true)
     {
+        const int MaxSignIns = 2; // never turn a broken token into a stream of browser windows
         var engine = new SyncEngine(_drive);
+        int signIns = 0;
+        bool abort = false;
+
         foreach (var profile in targets)
         {
-            try
+            if (abort) break;
+
+            for (int attempt = 0; attempt < 2; attempt++)
             {
-                await engine.SyncProfileAsync(profile, Log);
-                profile.LastSyncUtc = DateTime.UtcNow;
-            }
-            catch (Exception ex)
-            {
-                Log($"ERROR in profile '{profile.Name}': {ex.Message}");
+                try
+                {
+                    await engine.SyncProfileAsync(profile, Log);
+                    profile.LastSyncUtc = DateTime.UtcNow;
+                    _needsSignIn = false; // the token works: resume automatic syncing
+                    break;
+                }
+                catch (Exception ex) when (attempt == 0 && signIns < MaxSignIns &&
+                                           GoogleDriveClient.IsInvalidGrant(ex))
+                {
+                    signIns++;
+                    Log("The Google Drive token has expired or was revoked.");
+
+                    if (!interactive)
+                    {
+                        _needsSignIn = true;
+                        Log("Sign in again with Sync > Sync all to resume automatic syncing.");
+                        NotifySignInRequired();
+                        abort = true;
+                        break;
+                    }
+
+                    Log("Signing in again: your browser will open...");
+                    try
+                    {
+                        await _drive.ReauthorizeAsync(CredentialsPath);
+                        Log("Signed in again: retrying...");
+                    }
+                    catch (Exception authEx)
+                    {
+                        _needsSignIn = true;
+                        Log("ERROR: sign-in failed: " + authEx.Message);
+                        abort = true;
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    if (GoogleDriveClient.IsInvalidGrant(ex)) _needsSignIn = true;
+                    Log($"ERROR in profile '{profile.Name}': {ex.Message}");
+                    break;
+                }
             }
         }
+
+        // Always persist what did succeed, even if we gave up half-way.
         _config.Save();
         RefreshList();
         Log("Synchronization finished.");
     }
 
+    private void NotifySignInRequired()
+    {
+        if (InvokeRequired) { BeginInvoke(() => NotifySignInRequired()); return; }
+        try
+        {
+            _tray.BalloonTipTitle = "EmuSync";
+            _tray.BalloonTipText = "The Google Drive sign-in has expired. Open EmuSync and choose Sync > Sync all.";
+            _tray.BalloonTipIcon = ToolTipIcon.Warning;
+            _tray.ShowBalloonTip(10000);
+        }
+        catch { /* balloon tips are best-effort */ }
+    }
+
     private void SetBusy(bool busy)
     {
         _syncing = busy;
-        foreach (var b in new[] { _btnAdd, _btnRemove, _btnSyncSelected, _btnSyncAll })
-            b.Enabled = !busy;
+        foreach (var mi in new[] { _miAdd, _miRemove, _miSyncSelected, _miSyncAll })
+            mi.Enabled = !busy;
         UseWaitCursor = busy;
     }
 

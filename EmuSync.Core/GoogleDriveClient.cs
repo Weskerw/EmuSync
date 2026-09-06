@@ -1,4 +1,5 @@
 using Google.Apis.Auth.OAuth2;
+using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Drive.v3;
 using Google.Apis.Services;
 using Google.Apis.Upload;
@@ -53,27 +54,34 @@ public class GoogleDriveClient : IDisposable
     {
         if (_service != null) return;
 
-        ClientSecrets secrets;
-        if (credentialsPath != null && File.Exists(credentialsPath))
+        try
         {
-            using var stream = new FileStream(credentialsPath, FileMode.Open, FileAccess.Read);
-            secrets = GoogleClientSecrets.FromStream(stream).Secrets;
+            await AuthorizeAsync(credentialsPath, ct);
         }
-        else if (BuiltInCredentials.Available)
+        catch (Exception ex) when (IsInvalidGrant(ex))
         {
-            secrets = new ClientSecrets
-            {
-                ClientId = BuiltInCredentials.ClientId,
-                ClientSecret = BuiltInCredentials.ClientSecret
-            };
+            // The stored refresh token was revoked or expired: drop it and ask
+            // for consent again (the browser will open).
+            DeleteStoredToken();
+            await AuthorizeAsync(credentialsPath, ct);
         }
-        else
-        {
-            throw new InvalidOperationException(
-                "No OAuth credentials available.\n" +
-                "Fill in BuiltInCredentials.cs (see README) or place a " +
-                "credentials.json next to the executable.");
-        }
+    }
+
+    /// <summary>
+    /// Deletes the stored token and runs the OAuth flow again from scratch.
+    /// Used to recover from an 'invalid_grant' (token expired or revoked).
+    /// </summary>
+    public async Task ReauthorizeAsync(string? credentialsPath = null, CancellationToken ct = default)
+    {
+        _service?.Dispose();
+        _service = null;
+        DeleteStoredToken();
+        await AuthorizeAsync(credentialsPath, ct);
+    }
+
+    private async Task AuthorizeAsync(string? credentialsPath, CancellationToken ct)
+    {
+        var secrets = LoadSecrets(credentialsPath);
 
         var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
             secrets,
@@ -87,6 +95,59 @@ public class GoogleDriveClient : IDisposable
             HttpClientInitializer = credential,
             ApplicationName = "EmuSync"
         });
+    }
+
+    private static ClientSecrets LoadSecrets(string? credentialsPath)
+    {
+        if (credentialsPath != null && File.Exists(credentialsPath))
+        {
+            using var stream = new FileStream(credentialsPath, FileMode.Open, FileAccess.Read);
+            return GoogleClientSecrets.FromStream(stream).Secrets;
+        }
+        if (BuiltInCredentials.Available)
+        {
+            return new ClientSecrets
+            {
+                ClientId = BuiltInCredentials.ClientId,
+                ClientSecret = BuiltInCredentials.ClientSecret
+            };
+        }
+        throw new InvalidOperationException(
+            "No OAuth credentials available.\n" +
+            "Fill in BuiltInCredentials.cs (see README) or place a " +
+            "credentials.json next to the executable.");
+    }
+
+    private static void DeleteStoredToken()
+    {
+        try
+        {
+            if (Directory.Exists(AppConfig.TokenDir))
+                Directory.Delete(AppConfig.TokenDir, true);
+        }
+        catch (IOException) { /* the token will simply be overwritten */ }
+        catch (UnauthorizedAccessException) { /* idem */ }
+    }
+
+    /// <summary>
+    /// True if the exception means the stored refresh token is no longer valid
+    /// (revoked, expired, or the consent was withdrawn). The only cure is a new sign-in.
+    /// </summary>
+    public static bool IsInvalidGrant(Exception? ex)
+    {
+        while (ex != null)
+        {
+            if (ex is TokenResponseException tre &&
+                string.Equals(tre.Error?.Error, "invalid_grant", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (ex is AggregateException agg &&
+                agg.InnerExceptions.Any(inner => IsInvalidGrant(inner)))
+                return true;
+
+            ex = ex.InnerException;
+        }
+        return false;
     }
 
     private DriveService Service => _service ?? throw new InvalidOperationException("Not connected to Google Drive.");
@@ -220,8 +281,7 @@ public class GoogleDriveClient : IDisposable
     {
         _service?.Dispose();
         _service = null;
-        if (Directory.Exists(AppConfig.TokenDir))
-            Directory.Delete(AppConfig.TokenDir, true);
+        DeleteStoredToken();
     }
 
     public void Dispose() => _service?.Dispose();
