@@ -17,8 +17,19 @@
     <ProjectReference Include="..\EmuSync.Core\EmuSync.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- DPAPI: encrypts the stored Firebase refresh token for the current Windows user -->
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
   <ItemGroup Condition="Exists('credentials.json')">
     <None Update="credentials.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('emusync-firebase.json')">
+    <None Update="emusync-firebase.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

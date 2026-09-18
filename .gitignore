@@ -3,4 +3,5 @@ obj/
 .vs/
 *.user
 credentials.json
+emusync-firebase.json
 site/.firebase/

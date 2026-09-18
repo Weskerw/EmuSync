@@ -1,9 +1,7 @@
-using Google.Apis.Auth.OAuth2;
 using Google.Apis.Auth.OAuth2.Responses;
 using Google.Apis.Drive.v3;
 using Google.Apis.Services;
 using Google.Apis.Upload;
-using Google.Apis.Util.Store;
 using DriveFile = Google.Apis.Drive.v3.Data.File;
 
 namespace EmuSync.Core;
@@ -15,6 +13,7 @@ public class RemoteFile
     public string Name { get; set; } = "";
     public string? Md5 { get; set; }
     public DateTime? ModifiedTimeUtc { get; set; }
+    public long Size { get; set; }
     public string ParentId { get; set; } = "";
 }
 
@@ -28,105 +27,71 @@ public class RemoteListing
     public Dictionary<string, string> Folders { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
+/// <summary>
+/// Drive access for the save files themselves. The account is the user's own, so
+/// the bytes never leave their Drive quota; Firebase only holds the configuration
+/// and the file index.
+///
+/// The consent is obtained through <see cref="IGoogleAuthorizationProvider"/>,
+/// which is the only platform-specific dependency.
+/// </summary>
 public class GoogleDriveClient : IDisposable
 {
     private const string FolderMime = "application/vnd.google-apps.folder";
+
+    private readonly IGoogleAuthorizationProvider _authProvider;
     private DriveService? _service;
+
+    public GoogleDriveClient(IGoogleAuthorizationProvider authProvider) => _authProvider = authProvider;
 
     public bool IsConnected => _service != null;
 
-    /// <summary>
-    /// True if an OAuth token from a previous sign-in is stored:
-    /// in that case ConnectAsync will not open the browser.
-    /// </summary>
-    public static bool HasStoredToken =>
-        Directory.Exists(AppConfig.TokenDir) && Directory.EnumerateFiles(AppConfig.TokenDir).Any();
+    /// <summary>True when a previous sign-in left a token: connecting will not open the browser.</summary>
+    public bool HasStoredToken => _authProvider.HasStoredToken;
 
     /// <summary>
-    /// Desktop OAuth authentication (Windows/Linux/macOS): the first run opens
-    /// the browser for consent ("Sign in with Google"), then the stored token
-    /// is reused. End users don't need to configure anything: the app
-    /// credentials are embedded (BuiltInCredentials) or, if present, a
-    /// credentials.json next to the executable is used instead.
-    /// A dedicated flow will be needed on Android, but the rest of this class is reusable.
+    /// The Google ID token from the last authorization, if any. Used to sign the
+    /// user in to Firebase with the same consent.
     /// </summary>
-    public async Task ConnectAsync(string? credentialsPath = null, CancellationToken ct = default)
+    public string? LastIdToken { get; private set; }
+
+    /// <summary>
+    /// Connects to Drive, reusing the stored token when possible. If Google
+    /// rejects it (revoked or expired) the consent flow runs once more.
+    /// </summary>
+    public async Task ConnectAsync(CancellationToken ct = default)
     {
         if (_service != null) return;
 
         try
         {
-            await AuthorizeAsync(credentialsPath, ct);
+            await AuthorizeAsync(force: false, ct);
         }
         catch (Exception ex) when (IsInvalidGrant(ex))
         {
-            // The stored refresh token was revoked or expired: drop it and ask
-            // for consent again (the browser will open).
-            DeleteStoredToken();
-            await AuthorizeAsync(credentialsPath, ct);
+            await AuthorizeAsync(force: true, ct);
         }
     }
 
-    /// <summary>
-    /// Deletes the stored token and runs the OAuth flow again from scratch.
-    /// Used to recover from an 'invalid_grant' (token expired or revoked).
-    /// </summary>
-    public async Task ReauthorizeAsync(string? credentialsPath = null, CancellationToken ct = default)
+    /// <summary>Forces a fresh consent (used by "change account" and after an invalid_grant).</summary>
+    public Task ReauthorizeAsync(CancellationToken ct = default) => AuthorizeAsync(force: true, ct);
+
+    private async Task AuthorizeAsync(bool force, CancellationToken ct)
     {
         _service?.Dispose();
         _service = null;
-        DeleteStoredToken();
-        await AuthorizeAsync(credentialsPath, ct);
-    }
 
-    private async Task AuthorizeAsync(string? credentialsPath, CancellationToken ct)
-    {
-        var secrets = LoadSecrets(credentialsPath);
+        var auth = force
+            ? await _authProvider.ReauthorizeAsync(ct)
+            : await _authProvider.AuthorizeAsync(ct);
 
-        var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
-            secrets,
-            new[] { DriveService.Scope.DriveFile },
-            "user",
-            ct,
-            new FileDataStore(AppConfig.TokenDir, true));
+        LastIdToken = auth.IdToken;
 
         _service = new DriveService(new BaseClientService.Initializer
         {
-            HttpClientInitializer = credential,
+            HttpClientInitializer = auth.Credential,
             ApplicationName = "EmuSync"
         });
-    }
-
-    private static ClientSecrets LoadSecrets(string? credentialsPath)
-    {
-        if (credentialsPath != null && File.Exists(credentialsPath))
-        {
-            using var stream = new FileStream(credentialsPath, FileMode.Open, FileAccess.Read);
-            return GoogleClientSecrets.FromStream(stream).Secrets;
-        }
-        if (BuiltInCredentials.Available)
-        {
-            return new ClientSecrets
-            {
-                ClientId = BuiltInCredentials.ClientId,
-                ClientSecret = BuiltInCredentials.ClientSecret
-            };
-        }
-        throw new InvalidOperationException(
-            "No OAuth credentials available.\n" +
-            "Fill in BuiltInCredentials.cs (see README) or place a " +
-            "credentials.json next to the executable.");
-    }
-
-    private static void DeleteStoredToken()
-    {
-        try
-        {
-            if (Directory.Exists(AppConfig.TokenDir))
-                Directory.Delete(AppConfig.TokenDir, true);
-        }
-        catch (IOException) { /* the token will simply be overwritten */ }
-        catch (UnauthorizedAccessException) { /* idem */ }
     }
 
     /// <summary>
@@ -190,7 +155,7 @@ public class GoogleDriveClient : IDisposable
         {
             var list = Service.Files.List();
             list.Q = $"'{folderId}' in parents and trashed = false";
-            list.Fields = "nextPageToken, files(id, name, mimeType, md5Checksum, modifiedTime)";
+            list.Fields = "nextPageToken, files(id, name, mimeType, md5Checksum, modifiedTime, size)";
             list.PageSize = 1000;
             list.PageToken = pageToken;
             var page = await list.ExecuteAsync(ct);
@@ -211,6 +176,7 @@ public class GoogleDriveClient : IDisposable
                         Name = f.Name,
                         Md5 = f.Md5Checksum,
                         ModifiedTimeUtc = f.ModifiedTimeDateTimeOffset?.UtcDateTime,
+                        Size = f.Size ?? 0,
                         ParentId = folderId
                     };
                 }
@@ -219,8 +185,8 @@ public class GoogleDriveClient : IDisposable
         } while (pageToken != null);
     }
 
-    /// <summary>Uploads a new file, preserving the local modification time.</summary>
-    public async Task UploadNewAsync(string localPath, string name, string parentId, CancellationToken ct = default)
+    /// <summary>Uploads a new file, preserving the local modification time. Returns the Drive id.</summary>
+    public async Task<string> UploadNewAsync(string localPath, string name, string parentId, CancellationToken ct = default)
     {
         var meta = new DriveFile
         {
@@ -234,6 +200,7 @@ public class GoogleDriveClient : IDisposable
         var progress = await request.UploadAsync(ct);
         if (progress.Status != UploadStatus.Completed)
             throw new IOException($"Upload failed for '{name}': {progress.Exception?.Message}");
+        return request.ResponseBody?.Id ?? "";
     }
 
     /// <summary>Updates the content of an existing file, preserving the local modification time.</summary>
@@ -274,14 +241,23 @@ public class GoogleDriveClient : IDisposable
     }
 
     /// <summary>
-    /// Signs out: disconnects and deletes the stored token, so the next
-    /// ConnectAsync opens the browser and asks for an account again.
+    /// Moves a file to the Drive trash. Used to propagate a local deletion:
+    /// trashing (rather than deleting for good) keeps a 30-day safety net.
     /// </summary>
+    public async Task TrashAsync(string fileId, CancellationToken ct = default)
+    {
+        var request = Service.Files.Update(new DriveFile { Trashed = true }, fileId);
+        request.Fields = "id";
+        await request.ExecuteAsync(ct);
+    }
+
+    /// <summary>Signs out: the next ConnectAsync opens the browser and asks for an account again.</summary>
     public void SignOut()
     {
         _service?.Dispose();
         _service = null;
-        DeleteStoredToken();
+        LastIdToken = null;
+        _authProvider.SignOut();
     }
 
     public void Dispose() => _service?.Dispose();
