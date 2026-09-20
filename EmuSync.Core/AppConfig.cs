@@ -60,10 +60,16 @@ public class AppConfig
             config = File.Exists(ConfigPath)
                 ? JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(ConfigPath)) ?? new AppConfig()
                 : new AppConfig();
+
+            // The property has a setter, so the deserializer hands back a plain
+            // case-sensitive dictionary; folder lookups by emulator key must not
+            // depend on how the key happened to be capitalised when it was written.
+            config.LocalPaths = new Dictionary<string, string>(config.LocalPaths, StringComparer.OrdinalIgnoreCase);
         }
         catch
         {
-            // Corrupted config: start from scratch rather than refusing to launch.
+            // Corrupted config (or keys differing only in case): start from
+            // scratch rather than refusing to launch.
             config = new AppConfig();
         }
 

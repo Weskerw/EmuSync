@@ -164,7 +164,9 @@ reliable across multiple PCs.
 ```
 users/{uid}                     email, settings, list of emulators
 users/{uid}/devices/{deviceId}  device name and its local folders
-users/{uid}/emulators/{key}     file index (path, MD5, size, date, Drive id)
+users/{uid}/emulators/{key}     file index (path, MD5, size, date) + tombstones
+users/{uid}/activity/{runId}    sync history: one document per sync, with every
+                                file it touched — kept for one year
 ```
 
 No save data is stored in Firebase — only metadata. The security rules make each

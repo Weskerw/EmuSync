@@ -41,7 +41,7 @@ public class CloudDevice
     public Dictionary<string, string> Paths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
-/// <summary>One file known to the cloud index.</summary>
+/// <summary>One file listed in the shared index (for display on other devices).</summary>
 public class IndexEntry
 {
     /// <summary>Path relative to the emulator's save folder, '/' separated.</summary>
@@ -50,23 +50,62 @@ public class IndexEntry
     public string Md5 { get; set; } = "";
     public long Size { get; set; }
     public DateTime ModifiedUtc { get; set; }
+}
 
-    /// <summary>Drive file id, so a rename on Drive does not cause a re-upload.</summary>
-    public string DriveId { get; set; } = "";
+/// <summary>A file that was deleted on purpose, so the other devices delete it too.</summary>
+public class Tombstone
+{
+    public string Path { get; set; } = "";
+
+    /// <summary>Content the file had when it was deleted: a device holding something
+    /// different has newer work and must keep (and re-upload) it instead.</summary>
+    public string Md5 { get; set; } = "";
+
+    public DateTime DeletedUtc { get; set; }
+
+    /// <summary>Device that performed the deletion, for the log.</summary>
+    public string DeviceId { get; set; } = "";
 }
 
 /// <summary>
-/// The list of files EmuSync believes are in sync for one emulator, stored in
-/// <c>users/{uid}/emulators/{key}</c>. It is what makes deletions propagate: a
-/// file that is in the index but missing locally was deleted, not simply never
-/// downloaded.
+/// What the cloud knows about one emulator, stored in
+/// <c>users/{uid}/emulators/{key}</c>: a summary of the synced saves plus the
+/// tombstones that let deletions travel between devices.
+///
+/// It deliberately does NOT drive the merge — that is the job of the per-device
+/// snapshot in <see cref="DeviceIndexStore"/>. Here the file list exists so other
+/// devices (and, later, a phone) can show what is in sync without listing Drive.
 /// </summary>
 public class RemoteIndex
 {
+    /// <summary>Above this many files the list is truncated, to stay well under
+    /// Firestore's 1 MiB document limit. Only the display list is affected.</summary>
+    public const int MaxListedFiles = 1500;
+
+    /// <summary>Tombstones are pruned after this long: by then every device has synced.</summary>
+    public static readonly TimeSpan TombstoneLifetime = TimeSpan.FromDays(90);
+
     public string EmulatorKey { get; set; } = "";
     public DateTime? LastSyncUtc { get; set; }
     public string LastDeviceId { get; set; } = "";
-    public Dictionary<string, IndexEntry> Entries { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public int FileCount { get; set; }
+    public long TotalBytes { get; set; }
+
+    /// <summary>Synced files, possibly truncated — informational only.</summary>
+    public List<IndexEntry> Files { get; set; } = new();
+
+    /// <summary>relative path -> deletion record</summary>
+    public Dictionary<string, Tombstone> Deleted { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool Truncated => FileCount > Files.Count;
+
+    /// <summary>Drops expired tombstones so the document cannot grow forever.</summary>
+    public void PruneTombstones()
+    {
+        DateTime cutoff = DateTime.UtcNow - TombstoneLifetime;
+        foreach (string path in Deleted.Where(kv => kv.Value.DeletedUtc < cutoff).Select(kv => kv.Key).ToList())
+            Deleted.Remove(path);
+    }
 }
 
 /// <summary>
@@ -212,6 +251,8 @@ public class CloudStore
 
         index.LastSyncUtc = FirestoreClient.GetDateTime(fields, "lastSyncUtc");
         index.LastDeviceId = FirestoreClient.GetString(fields, "lastDeviceId");
+        index.FileCount = FirestoreClient.GetInt(fields, "fileCount");
+        index.TotalBytes = fields.TryGetValue("totalBytes", out var total) && total is long bytes ? bytes : 0;
 
         foreach (var item in FirestoreClient.GetList(fields, "files"))
         {
@@ -219,47 +260,193 @@ public class CloudStore
             string path = FirestoreClient.GetString(map, "p");
             if (string.IsNullOrEmpty(path)) continue;
 
-            index.Entries[path] = new IndexEntry
+            index.Files.Add(new IndexEntry
             {
                 Path = path,
                 Md5 = FirestoreClient.GetString(map, "md5"),
                 Size = map.TryGetValue("sz", out var sz) && sz is long size ? size : 0,
-                ModifiedUtc = FirestoreClient.GetDateTime(map, "mt") ?? DateTime.MinValue,
-                DriveId = FirestoreClient.GetString(map, "id")
+                ModifiedUtc = FirestoreClient.GetDateTime(map, "mt") ?? DateTime.MinValue
+            });
+        }
+
+        foreach (var item in FirestoreClient.GetList(fields, "deleted"))
+        {
+            if (item is not Dictionary<string, object?> map) continue;
+            string path = FirestoreClient.GetString(map, "p");
+            if (string.IsNullOrEmpty(path)) continue;
+
+            index.Deleted[path] = new Tombstone
+            {
+                Path = path,
+                Md5 = FirestoreClient.GetString(map, "md5"),
+                DeletedUtc = FirestoreClient.GetDateTime(map, "at") ?? DateTime.UtcNow,
+                DeviceId = FirestoreClient.GetString(map, "dev")
             };
         }
 
+        // Prune on the way in as well: an expired tombstone must not be acted on
+        // one last time by the very run that removes it.
+        index.PruneTombstones();
         return index;
     }
 
     public async Task SaveIndexAsync(RemoteIndex index, string deviceId, CancellationToken ct = default)
     {
-        var files = index.Entries.Values
+        index.PruneTombstones();
+        index.LastSyncUtc = DateTime.UtcNow;
+        index.LastDeviceId = deviceId;
+
+        var listed = index.Files
             .OrderBy(e => e.Path, StringComparer.OrdinalIgnoreCase)
+            .Take(RemoteIndex.MaxListedFiles)
             .Select(e => (object?)new Dictionary<string, object?>
             {
                 ["p"] = e.Path,
                 ["md5"] = e.Md5,
                 ["sz"] = e.Size,
-                ["mt"] = e.ModifiedUtc,
-                ["id"] = e.DriveId
+                ["mt"] = e.ModifiedUtc
             })
             .ToList();
 
-        index.LastSyncUtc = DateTime.UtcNow;
-        index.LastDeviceId = deviceId;
+        var tombstones = index.Deleted.Values
+            .OrderByDescending(t => t.DeletedUtc)
+            .Take(RemoteIndex.MaxListedFiles)
+            .Select(t => (object?)new Dictionary<string, object?>
+            {
+                ["p"] = t.Path,
+                ["md5"] = t.Md5,
+                ["at"] = t.DeletedUtc,
+                ["dev"] = t.DeviceId
+            })
+            .ToList();
 
         await _firestore.PatchDocumentAsync($"{UserPath}/emulators/{index.EmulatorKey}", new Dictionary<string, object?>
         {
             ["lastSyncUtc"] = index.LastSyncUtc,
             ["lastDeviceId"] = deviceId,
-            ["fileCount"] = files.Count,
-            ["files"] = files
+            ["fileCount"] = index.FileCount,
+            ["totalBytes"] = index.TotalBytes,
+            ["files"] = listed,
+            ["deleted"] = tombstones
         }, ct);
     }
 
     public async Task DeleteIndexAsync(string emulatorKey, CancellationToken ct = default) =>
         await _firestore.DeleteDocumentAsync($"{UserPath}/emulators/{emulatorKey}", ct);
+
+    // ------------------------------------------------------------- activity
+
+    /// <summary>
+    /// Appends one sync to the history in <c>users/{uid}/activity</c>. Failures
+    /// are swallowed by the caller: a missing history line must never turn a
+    /// successful sync into an error.
+    /// </summary>
+    public async Task SaveRunAsync(SyncRunLog run, CancellationToken ct = default)
+    {
+        var operations = run.Operations
+            .Take(SyncRunLog.MaxOperations)
+            .Select(o => (object?)new Dictionary<string, object?>
+            {
+                ["a"] = o.Action.ToString(),
+                ["p"] = o.Path,
+                ["sz"] = o.Size,
+                ["md5"] = o.Md5,
+                ["at"] = o.AtUtc
+            })
+            .ToList();
+
+        var fields = new Dictionary<string, object?>
+        {
+            ["emulatorKey"] = run.EmulatorKey,
+            ["emulatorName"] = run.EmulatorName,
+            ["console"] = run.Console,
+            ["deviceId"] = run.DeviceId,
+            ["deviceName"] = run.DeviceName,
+            ["startedUtc"] = run.StartedUtc,
+            ["durationMs"] = run.DurationMs,
+            ["uploaded"] = run.Uploaded,
+            ["downloaded"] = run.Downloaded,
+            ["skipped"] = run.Skipped,
+            ["conflicts"] = run.Conflicts,
+            ["deletedLocal"] = run.DeletedLocal,
+            ["deletedRemote"] = run.DeletedRemote,
+            ["bytes"] = run.Bytes,
+            ["truncated"] = run.Operations.Count > operations.Count,
+            ["error"] = run.Error,
+            ["ops"] = operations
+        };
+
+        await _firestore.PatchDocumentAsync($"{UserPath}/activity/{run.Id}", fields, ct);
+    }
+
+    /// <summary>The most recent syncs, newest first, across every device.</summary>
+    public async Task<List<SyncRunLog>> ListRunsAsync(int limit = 200, CancellationToken ct = default)
+    {
+        var documents = await _firestore.RunQueryAsync(
+            UserPath, "activity", orderByField: "startedUtc", descending: true, limit: limit, ct: ct);
+
+        return documents.Select(d => ReadRun(d.Id, d.Fields)).ToList();
+    }
+
+    private static SyncRunLog ReadRun(string id, Dictionary<string, object?> fields)
+    {
+        var run = new SyncRunLog
+        {
+            Id = id,
+            EmulatorKey = FirestoreClient.GetString(fields, "emulatorKey"),
+            EmulatorName = FirestoreClient.GetString(fields, "emulatorName"),
+            Console = FirestoreClient.GetString(fields, "console"),
+            DeviceId = FirestoreClient.GetString(fields, "deviceId"),
+            DeviceName = FirestoreClient.GetString(fields, "deviceName"),
+            StartedUtc = FirestoreClient.GetDateTime(fields, "startedUtc") ?? DateTime.MinValue,
+            DurationMs = FirestoreClient.GetInt(fields, "durationMs"),
+            Uploaded = FirestoreClient.GetInt(fields, "uploaded"),
+            Downloaded = FirestoreClient.GetInt(fields, "downloaded"),
+            Skipped = FirestoreClient.GetInt(fields, "skipped"),
+            Conflicts = FirestoreClient.GetInt(fields, "conflicts"),
+            DeletedLocal = FirestoreClient.GetInt(fields, "deletedLocal"),
+            DeletedRemote = FirestoreClient.GetInt(fields, "deletedRemote"),
+            Bytes = fields.TryGetValue("bytes", out var b) && b is long bytes ? bytes : 0,
+            Truncated = FirestoreClient.GetBool(fields, "truncated"),
+            Error = fields.TryGetValue("error", out var e) ? e as string : null
+        };
+
+        foreach (var item in FirestoreClient.GetList(fields, "ops"))
+        {
+            if (item is not Dictionary<string, object?> map) continue;
+            run.Operations.Add(new SyncOperation
+            {
+                Action = Enum.TryParse(FirestoreClient.GetString(map, "a"), out SyncAction action)
+                    ? action
+                    : SyncAction.Uploaded,
+                Path = FirestoreClient.GetString(map, "p"),
+                Size = map.TryGetValue("sz", out var sz) && sz is long size ? size : 0,
+                Md5 = FirestoreClient.GetString(map, "md5"),
+                AtUtc = FirestoreClient.GetDateTime(map, "at") ?? run.StartedUtc
+            });
+        }
+
+        return run;
+    }
+
+    /// <summary>
+    /// Deletes history older than the retention period. Called once per start, a
+    /// batch at a time, so a long-unused account catches up over a few launches
+    /// instead of firing hundreds of deletes at once.
+    /// </summary>
+    public async Task<int> PruneRunsAsync(int maxDeletes = 100, CancellationToken ct = default)
+    {
+        var expired = await _firestore.RunQueryAsync(
+            UserPath, "activity",
+            orderByField: "startedUtc", descending: false, limit: maxDeletes,
+            where: ("startedUtc", "LESS_THAN", DateTime.UtcNow - SyncRunLog.Retention),
+            ct: ct);
+
+        foreach (var (id, _) in expired)
+            await _firestore.DeleteDocumentAsync($"{UserPath}/activity/{id}", ct);
+
+        return expired.Count;
+    }
 
     // ------------------------------------------------------------- profiles
 

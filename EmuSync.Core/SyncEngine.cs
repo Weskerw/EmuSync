@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 
 namespace EmuSync.Core;
@@ -10,6 +11,25 @@ public class SyncStats
     public int Conflicts;
     public int DeletedLocal;
     public int DeletedRemote;
+
+    /// <summary>Bytes transferred, both directions.</summary>
+    public long Bytes;
+
+    /// <summary>Every file this sync touched, in order — the history's raw material.</summary>
+    public List<SyncOperation> Operations { get; } = new();
+
+    public void Record(SyncAction action, string path, long size, string md5)
+    {
+        Operations.Add(new SyncOperation
+        {
+            Action = action,
+            Path = path,
+            Size = size,
+            Md5 = md5
+        });
+
+        if (action is SyncAction.Uploaded or SyncAction.Downloaded) Bytes += size;
+    }
 
     public override string ToString()
     {
@@ -25,12 +45,15 @@ public class SyncStats
 ///
 /// Layout: the local save folder of an emulator maps to <c>EmuSync/&lt;key&gt;</c>
 /// on Drive — PCSX2 always lands in <c>EmuSync/pcsx2</c>, whatever the folder is
-/// called on this machine — while Firestore keeps the index of what was last
-/// synced.
+/// called on this machine.
 ///
-/// That index is what turns "copy the newest file" into a real sync: comparing
-/// local, remote and last-known state tells a deletion apart from a file that was
-/// simply never downloaded, which the old folder-to-folder sync could not do.
+/// Three states are compared for every file:
+///   • the local copy;
+///   • the copy on Drive;
+///   • this device's snapshot of the last successful sync (<see cref="DeviceIndexStore"/>).
+/// The snapshot is what tells a deletion apart from a file that simply has not
+/// been downloaded here yet. Deletions are then published as tombstones in the
+/// shared Firestore index, which is how they reach the other devices.
 /// </summary>
 public class SyncEngine
 {
@@ -42,18 +65,83 @@ public class SyncEngine
     private readonly GoogleDriveClient _drive;
     private readonly CloudStore _cloud;
     private readonly string _deviceId;
+    private readonly string _deviceName;
 
-    public SyncEngine(GoogleDriveClient drive, CloudStore cloud, string deviceId)
+    public SyncEngine(GoogleDriveClient drive, CloudStore cloud, string deviceId, string deviceName)
     {
         _drive = drive;
         _cloud = cloud;
         _deviceId = deviceId;
+        _deviceName = deviceName;
     }
 
+    /// <summary>
+    /// Syncs one emulator and records the run in the shared history, successes and
+    /// failures alike.
+    /// </summary>
     public async Task<SyncStats> SyncProfileAsync(EmulatorProfile profile, Action<string> log, CancellationToken ct = default)
     {
         var stats = new SyncStats();
+        var startedUtc = DateTime.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        string? error = null;
 
+        try
+        {
+            await SyncCoreAsync(profile, stats, log, ct);
+            return stats;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            throw;
+        }
+        finally
+        {
+            await WriteHistoryAsync(profile, stats, startedUtc, stopwatch.ElapsedMilliseconds, error, ct);
+        }
+    }
+
+    /// <summary>Writes the history entry. Never throws: history is not worth a failed sync.</summary>
+    private async Task WriteHistoryAsync(EmulatorProfile profile, SyncStats stats, DateTime startedUtc,
+        long durationMs, string? error, CancellationToken ct)
+    {
+        // Nothing moved and nothing broke: don't fill the history with "checked,
+        // all fine" from every periodic poll of every device.
+        if (error == null && stats.Operations.Count == 0) return;
+
+        try
+        {
+            await _cloud.SaveRunAsync(new SyncRunLog
+            {
+                Id = $"{startedUtc:yyyyMMdd'T'HHmmssfff}-{_deviceId}-{profile.Key}",
+                EmulatorKey = profile.Key,
+                EmulatorName = profile.DisplayName,
+                Console = profile.Console,
+                DeviceId = _deviceId,
+                DeviceName = _deviceName,
+                StartedUtc = startedUtc,
+                DurationMs = (int)Math.Min(durationMs, int.MaxValue),
+                Uploaded = stats.Uploaded,
+                Downloaded = stats.Downloaded,
+                Skipped = stats.Skipped,
+                Conflicts = stats.Conflicts,
+                DeletedLocal = stats.DeletedLocal,
+                DeletedRemote = stats.DeletedRemote,
+                Bytes = stats.Bytes,
+                Error = error,
+                Operations = stats.Operations
+            }, CancellationToken.None);
+        }
+        catch
+        {
+            // Offline, rules refused, quota exhausted: the sync itself still stands.
+        }
+    }
+
+    private async Task SyncCoreAsync(EmulatorProfile profile, SyncStats stats, Action<string> log,
+        CancellationToken ct)
+    {
         if (!profile.IsLinkedHere)
             throw new InvalidOperationException($"No local folder set for '{profile.DisplayName}' on this device.");
         if (!Directory.Exists(profile.LocalPath))
@@ -65,10 +153,11 @@ public class SyncEngine
         string rootId = await _drive.EnsureFolderAsync(RootFolderName, null, ct);
         string emulatorFolderId = await _drive.EnsureFolderAsync(profile.Key, rootId, ct);
 
-        // 2. The three states to compare.
+        // 2. The three states.
         log("Reading the remote file list...");
         var remote = await _drive.ListRecursiveAsync(emulatorFolderId, ct);
         var index = await _cloud.LoadIndexAsync(profile.Key, ct);
+        var snapshot = DeviceIndexStore.Load(profile.Key);
 
         var local = Directory.EnumerateFiles(profile.LocalPath, "*", SearchOption.AllDirectories)
             .Where(p => !p.EndsWith(".emusync-tmp", StringComparison.OrdinalIgnoreCase))
@@ -77,18 +166,23 @@ public class SyncEngine
                 p => p,
                 StringComparer.OrdinalIgnoreCase);
 
-        // Safety net: an empty folder usually means the emulator is not installed
-        // here (or the drive is not mounted yet), not that the user deleted every
-        // save. Never let that wipe the cloud copy.
-        bool allowDeletions = local.Count > 0 || index.Entries.Count == 0;
-        if (!allowDeletions)
-            log("⚠ The local folder is empty: deletions will not be propagated this time.");
+        // Safety nets. An empty side almost always means "not ready" (emulator not
+        // installed here, external drive not mounted, Drive folder recreated), not
+        // "the user deleted everything" — and a wrong guess here costs real saves.
+        bool allowRemoteDeletions = local.Count > 0;
+        bool allowLocalDeletions = remote.Files.Count > 0;
 
-        var newIndex = new RemoteIndex { EmulatorKey = profile.Key };
+        if (!allowRemoteDeletions)
+            log("⚠ The local folder is empty: deletions will not be propagated to Drive.");
+        if (!allowLocalDeletions)
+            log("⚠ The remote folder is empty: nothing will be deleted locally.");
+
+        var newSnapshot = new DeviceSnapshot { EmulatorKey = profile.Key };
 
         var allPaths = local.Keys
             .Union(remote.Files.Keys, StringComparer.OrdinalIgnoreCase)
-            .Union(index.Entries.Keys, StringComparer.OrdinalIgnoreCase)
+            .Union(snapshot.Files.Keys, StringComparer.OrdinalIgnoreCase)
+            .Union(index.Deleted.Keys, StringComparer.OrdinalIgnoreCase)
             .OrderBy(p => p, StringComparer.OrdinalIgnoreCase);
 
         foreach (string relPath in allPaths)
@@ -97,7 +191,8 @@ public class SyncEngine
 
             bool hasLocal = local.TryGetValue(relPath, out string? localPath);
             bool hasRemote = remote.Files.TryGetValue(relPath, out RemoteFile? remoteFile);
-            index.Entries.TryGetValue(relPath, out IndexEntry? known);
+            snapshot.Files.TryGetValue(relPath, out SnapshotEntry? known);
+            index.Deleted.TryGetValue(relPath, out Tombstone? tombstone);
 
             // ---------------------------------------------------- both present
             if (hasLocal && hasRemote)
@@ -105,26 +200,31 @@ public class SyncEngine
                 string localMd5 = ComputeMd5(localPath!);
                 string remoteMd5 = remoteFile!.Md5 ?? "";
 
-                if (!string.IsNullOrEmpty(remoteMd5) &&
-                    string.Equals(localMd5, remoteMd5, StringComparison.OrdinalIgnoreCase))
+                // The file is back on both sides: any old tombstone is void.
+                index.Deleted.Remove(relPath);
+
+                if (!string.IsNullOrEmpty(remoteMd5) && Same(localMd5, remoteMd5))
                 {
                     stats.Skipped++;
-                    newIndex.Entries[relPath] = Entry(relPath, localMd5, localPath!, remoteFile.Id);
+                    newSnapshot.Files[relPath] = Snap(localMd5, localPath!);
                     continue;
                 }
 
-                bool localChanged = known == null || !string.Equals(localMd5, known.Md5, StringComparison.OrdinalIgnoreCase);
-                bool remoteChanged = known == null || !string.Equals(remoteMd5, known.Md5, StringComparison.OrdinalIgnoreCase);
+                bool localChanged = known == null || !Same(localMd5, known.Md5);
+                bool remoteChanged = known == null || !Same(remoteMd5, known.Md5);
 
                 DateTime localTime = File.GetLastWriteTimeUtc(localPath!);
                 DateTime remoteTime = remoteFile.ModifiedTimeUtc ?? DateTime.MinValue;
 
-                // Only one side moved since the last sync: no ambiguity.
+                SyncAction action;
+
+                // Only one side moved since the last sync: no ambiguity at all.
                 if (localChanged && !remoteChanged)
                 {
                     log($"↑ Updating on Drive: {relPath}");
                     await _drive.UpdateAsync(remoteFile.Id, localPath!, ct);
                     stats.Uploaded++;
+                    action = SyncAction.Uploaded;
                 }
                 else if (remoteChanged && !localChanged)
                 {
@@ -132,12 +232,14 @@ public class SyncEngine
                     await _drive.DownloadAsync(remoteFile, localPath!, ct);
                     stats.Downloaded++;
                     localMd5 = remoteMd5;
+                    action = SyncAction.Downloaded;
                 }
                 else if (localTime - remoteTime > Tolerance)
                 {
                     log($"↑ Both changed, the local file is newer: {relPath}");
                     await _drive.UpdateAsync(remoteFile.Id, localPath!, ct);
                     stats.Uploaded++;
+                    action = SyncAction.Uploaded;
                 }
                 else if (remoteTime - localTime > Tolerance)
                 {
@@ -145,18 +247,22 @@ public class SyncEngine
                     await _drive.DownloadAsync(remoteFile, localPath!, ct);
                     stats.Downloaded++;
                     localMd5 = remoteMd5;
+                    action = SyncAction.Downloaded;
                 }
                 else
                 {
-                    // Same timestamp, different content: guessing here could throw
-                    // away hours of play, so leave both copies alone.
+                    // Same timestamp, different content: guessing could throw away
+                    // hours of play, so leave both copies where they are.
                     log($"⚠ Conflict (same time, different content), skipped: {relPath}");
                     stats.Conflicts++;
-                    if (known != null) newIndex.Entries[relPath] = known;
+                    stats.Record(SyncAction.Conflict, relPath, SafeLength(localPath!), localMd5);
+                    if (known != null) newSnapshot.Files[relPath] = known;
                     continue;
                 }
 
-                newIndex.Entries[relPath] = Entry(relPath, localMd5, localPath!, remoteFile.Id);
+                var synced = Snap(localMd5, localPath!);
+                stats.Record(action, relPath, synced.Size, synced.Md5);
+                newSnapshot.Files[relPath] = synced;
                 continue;
             }
 
@@ -165,35 +271,69 @@ public class SyncEngine
             {
                 string localMd5 = ComputeMd5(localPath!);
 
-                // Known to the index and unchanged here: it was deleted elsewhere.
-                if (known != null && string.Equals(localMd5, known.Md5, StringComparison.OrdinalIgnoreCase))
+                // Deleted on another device, and untouched here since: follow suit.
+                if (tombstone != null && Same(localMd5, tombstone.Md5))
                 {
+                    // ...unless the safety net is up. It must block the deletion
+                    // without cancelling it: falling through would re-upload the
+                    // file and drop the tombstone, undoing the deletion for
+                    // everyone just because one listing came back empty.
+                    if (!allowLocalDeletions)
+                    {
+                        newSnapshot.Files[relPath] = Snap(localMd5, localPath!);
+                        continue;
+                    }
+
                     log($"✗ Deleted on another device, removing locally: {relPath}");
+                    long deletedSize = SafeLength(localPath!);
                     MoveToLocalTrash(profile.Key, relPath, localPath!);
                     stats.DeletedLocal++;
+                    stats.Record(SyncAction.DeletedLocal, relPath, deletedSize, localMd5);
                     continue;
                 }
 
-                log(known == null ? $"↑ Uploading new file: {relPath}" : $"↑ Re-uploading modified file: {relPath}");
+                // Either brand new, or changed here after someone deleted it
+                // elsewhere — in which case the newer work wins and comes back.
+                if (tombstone != null)
+                {
+                    log($"↑ Changed here after being deleted elsewhere, restoring: {relPath}");
+                    index.Deleted.Remove(relPath);
+                }
+                else
+                {
+                    log(known == null ? $"↑ Uploading new file: {relPath}" : $"↑ Re-uploading: {relPath}");
+                }
+
                 string parentId = await EnsureRemoteDirAsync(remote, emulatorFolderId, GetDir(relPath), ct);
-                string driveId = await _drive.UploadNewAsync(localPath!, Path.GetFileName(localPath!), parentId, ct);
+                await _drive.UploadNewAsync(localPath!, Path.GetFileName(localPath!), parentId, ct);
                 stats.Uploaded++;
-                newIndex.Entries[relPath] = Entry(relPath, localMd5, localPath!, driveId);
+
+                var uploaded = Snap(localMd5, localPath!);
+                stats.Record(SyncAction.Uploaded, relPath, uploaded.Size, uploaded.Md5);
+                newSnapshot.Files[relPath] = uploaded;
                 continue;
             }
 
-            // ------------------------------------------------- only on Drive
+            // --------------------------------------------------- only on Drive
             if (hasRemote)
             {
-                bool remoteUnchanged = known != null &&
-                    string.Equals(remoteFile!.Md5 ?? "", known.Md5, StringComparison.OrdinalIgnoreCase);
-
-                // Known, unchanged remotely, gone locally: the user deleted it here.
-                if (remoteUnchanged && allowDeletions)
+                // In THIS device's snapshot and unchanged on Drive: it was deleted
+                // here. Without the per-device snapshot this is indistinguishable
+                // from "another device just uploaded it", which is why the shared
+                // index must never be used for this decision.
+                if (known != null && Same(remoteFile!.Md5 ?? "", known.Md5) && allowRemoteDeletions)
                 {
                     log($"✗ Deleted locally, moving to the Drive trash: {relPath}");
                     await _drive.TrashAsync(remoteFile!.Id, ct);
+                    index.Deleted[relPath] = new Tombstone
+                    {
+                        Path = relPath,
+                        Md5 = known.Md5,
+                        DeletedUtc = DateTime.UtcNow,
+                        DeviceId = _deviceId
+                    };
                     stats.DeletedRemote++;
+                    stats.Record(SyncAction.DeletedRemote, relPath, remoteFile!.Size, known.Md5);
                     continue;
                 }
 
@@ -201,28 +341,52 @@ public class SyncEngine
                 string dest = Path.Combine(profile.LocalPath, relPath.Replace('/', Path.DirectorySeparatorChar));
                 await _drive.DownloadAsync(remoteFile!, dest, ct);
                 stats.Downloaded++;
-                newIndex.Entries[relPath] = Entry(relPath, remoteFile!.Md5 ?? ComputeMd5(dest), dest, remoteFile.Id);
+                index.Deleted.Remove(relPath);
+
+                var downloaded = Snap(remoteFile!.Md5 ?? ComputeMd5(dest), dest);
+                stats.Record(SyncAction.Downloaded, relPath, downloaded.Size, downloaded.Md5);
+                newSnapshot.Files[relPath] = downloaded;
                 continue;
             }
 
-            // Gone from both sides: just drop the stale index entry.
+            // Gone from both sides: drop it from the snapshot (the loop simply
+            // does not carry it over) and keep any tombstone until it expires.
         }
 
-        // 3. Publish the new index for the other devices.
-        await _cloud.SaveIndexAsync(newIndex, _deviceId, ct);
-        profile.LastSyncUtc = newIndex.LastSyncUtc;
+        // 3. Persist the new states: the snapshot locally, the summary and the
+        //    tombstones in the shared index.
+        DeviceIndexStore.Save(newSnapshot);
+
+        index.EmulatorKey = profile.Key;
+        index.TotalBytes = newSnapshot.Files.Values.Sum(e => e.Size);
+        index.Files = newSnapshot.Files
+            // A file kept alive by a blocked deletion is still tombstoned: listing
+            // it as synced would contradict the tombstone on the other devices.
+            .Where(kv => !index.Deleted.ContainsKey(kv.Key))
+            .Select(kv => new IndexEntry
+            {
+                Path = kv.Key,
+                Md5 = kv.Value.Md5,
+                Size = kv.Value.Size,
+                ModifiedUtc = kv.Value.ModifiedUtc
+            })
+            .ToList();
+        index.FileCount = index.Files.Count; // set before the list is capped for storage
+
+        await _cloud.SaveIndexAsync(index, _deviceId, ct);
+        profile.LastSyncUtc = index.LastSyncUtc;
 
         log($"{profile.DisplayName}: {stats}");
-        return stats;
     }
 
-    private static IndexEntry Entry(string relPath, string md5, string localPath, string driveId) => new()
+    private static bool Same(string a, string b) =>
+        !string.IsNullOrEmpty(a) && string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+    private static SnapshotEntry Snap(string md5, string localPath) => new()
     {
-        Path = relPath,
         Md5 = md5,
         Size = SafeLength(localPath),
-        ModifiedUtc = SafeWriteTime(localPath),
-        DriveId = driveId
+        ModifiedUtc = SafeWriteTime(localPath)
     };
 
     private static long SafeLength(string path)

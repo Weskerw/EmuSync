@@ -109,6 +109,80 @@ public class FirestoreClient
         return result;
     }
 
+    /// <summary>
+    /// Runs a structured query against one collection. Needed wherever plain
+    /// listing is not enough — "the 100 most recent runs", "everything older than
+    /// a year" — because <see cref="ListDocumentsAsync"/> can only walk documents
+    /// in name order.
+    /// </summary>
+    /// <param name="parentPath">Document holding the collection, e.g. <c>users/{uid}</c>.</param>
+    /// <param name="collectionId">Collection to query, e.g. <c>activity</c>.</param>
+    /// <param name="where">Optional filter: field, operator (LESS_THAN, EQUAL, ...) and value.</param>
+    public async Task<List<(string Id, Dictionary<string, object?> Fields)>> RunQueryAsync(
+        string parentPath,
+        string collectionId,
+        string? orderByField = null,
+        bool descending = true,
+        int? limit = null,
+        (string Field, string Op, object? Value)? where = null,
+        CancellationToken ct = default)
+    {
+        var query = new Dictionary<string, object?>
+        {
+            ["from"] = new List<object?> { new Dictionary<string, object?> { ["collectionId"] = collectionId } }
+        };
+
+        if (where.HasValue)
+        {
+            query["where"] = new Dictionary<string, object?>
+            {
+                ["fieldFilter"] = new Dictionary<string, object?>
+                {
+                    ["field"] = new Dictionary<string, object?> { ["fieldPath"] = where.Value.Field },
+                    ["op"] = where.Value.Op,
+                    ["value"] = ToValue(where.Value.Value)
+                }
+            };
+        }
+
+        if (orderByField != null)
+        {
+            query["orderBy"] = new List<object?>
+            {
+                new Dictionary<string, object?>
+                {
+                    ["field"] = new Dictionary<string, object?> { ["fieldPath"] = orderByField },
+                    ["direction"] = descending ? "DESCENDING" : "ASCENDING"
+                }
+            };
+        }
+
+        if (limit.HasValue) query["limit"] = limit.Value;
+
+        string payload = JsonSerializer.Serialize(new Dictionary<string, object?> { ["structuredQuery"] = query });
+
+        using var request = await NewRequestAsync(HttpMethod.Post,
+            $"{_options.FirestoreBaseUrl}/{parentPath.TrimStart('/')}:runQuery", ct);
+        request.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+
+        using var response = await Http.SendAsync(request, ct);
+        string body = await response.Content.ReadAsStringAsync(ct);
+        EnsureSuccess(response, body);
+
+        var result = new List<(string, Dictionary<string, object?>)>();
+        using var doc = JsonDocument.Parse(body);
+
+        foreach (var entry in doc.RootElement.EnumerateArray())
+        {
+            // Entries without a 'document' are just read-time markers.
+            if (!entry.TryGetProperty("document", out var document)) continue;
+            string name = document.GetProperty("name").GetString() ?? "";
+            result.Add((name[(name.LastIndexOf('/') + 1)..], ReadFields(document)));
+        }
+
+        return result;
+    }
+
     // ---------------------------------------------------------------- plumbing
 
     private string Url(string path) => $"{_options.FirestoreBaseUrl}/{path.TrimStart('/')}";

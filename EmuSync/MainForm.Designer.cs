@@ -15,6 +15,8 @@ partial class MainForm
     private System.Windows.Forms.ToolStripMenuItem _miSyncAll;
     private System.Windows.Forms.ToolStripSeparator _sepAuto;
     private System.Windows.Forms.ToolStripMenuItem _miAuto;
+    private System.Windows.Forms.ToolStripSeparator _sepHistory;
+    private System.Windows.Forms.ToolStripMenuItem _miHistory;
     private System.Windows.Forms.ToolStripMenuItem _settingsMenu;
     private System.Windows.Forms.ToolStripMenuItem _miDetect;
     private System.Windows.Forms.ToolStripSeparator _sepAccount;
@@ -73,6 +75,8 @@ partial class MainForm
         this._miSyncAll = new System.Windows.Forms.ToolStripMenuItem();
         this._sepAuto = new System.Windows.Forms.ToolStripSeparator();
         this._miAuto = new System.Windows.Forms.ToolStripMenuItem();
+        this._sepHistory = new System.Windows.Forms.ToolStripSeparator();
+        this._miHistory = new System.Windows.Forms.ToolStripMenuItem();
         this._settingsMenu = new System.Windows.Forms.ToolStripMenuItem();
         this._miDetect = new System.Windows.Forms.ToolStripMenuItem();
         this._sepAccount = new System.Windows.Forms.ToolStripSeparator();
@@ -128,7 +132,9 @@ partial class MainForm
             this._miSyncSelected,
             this._miSyncAll,
             this._sepAuto,
-            this._miAuto});
+            this._miAuto,
+            this._sepHistory,
+            this._miHistory});
         this._syncMenu.Name = "_syncMenu";
         this._syncMenu.Size = new System.Drawing.Size(44, 20);
         this._syncMenu.Text = "&Sync";
@@ -183,6 +189,18 @@ partial class MainForm
         this._miAuto.Name = "_miAuto";
         this._miAuto.Size = new System.Drawing.Size(280, 22);
         this._miAuto.Text = "A&uto-sync when saves change";
+        //
+        // _sepHistory
+        //
+        this._sepHistory.Name = "_sepHistory";
+        this._sepHistory.Size = new System.Drawing.Size(277, 6);
+        //
+        // _miHistory
+        //
+        this._miHistory.Name = "_miHistory";
+        this._miHistory.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.H)));
+        this._miHistory.Size = new System.Drawing.Size(280, 22);
+        this._miHistory.Text = "Sync &history...";
         //
         // _settingsMenu
         //

@@ -20,8 +20,24 @@ public partial class MainForm : Form
     private static readonly TimeSpan QuietPeriod = TimeSpan.FromSeconds(30);
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly HashSet<string> _dirtyKeys = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Folders that changed while a sync was running (possibly by that very sync).</summary>
+    private readonly HashSet<string> _changedDuringSync = new(StringComparer.OrdinalIgnoreCase);
     private DateTime _lastChangeUtc;
+
+    /// <summary>True while any long operation runs: greys out the menu.</summary>
     private bool _syncing;
+
+    /// <summary>
+    /// True only while files are actually being transferred. Distinct from
+    /// <see cref="_syncing"/>, which also covers dialogs and cloud loads: a save
+    /// written while a login window is open is a real change and must not be
+    /// mistaken for an echo of our own downloads.
+    /// </summary>
+    private bool _inSync;
+
+    /// <summary>Guards the auto-sync menu item against firing while we set it programmatically.</summary>
+    private bool _updatingAutoSyncItem;
 
     // When launched with --minimized (Start with Windows) the window stays
     // hidden and the app lives in the tray.
@@ -52,8 +68,10 @@ public partial class MainForm : Form
         _miSyncSelected.Click += async (_, _) => await SyncAsync(onlySelected: true);
         _miSyncAll.Click += async (_, _) => await SyncAsync(onlySelected: false);
 
-        _miAuto.Checked = _services.Local.AutoSync; // set before subscribing: no spurious log line
+        _miAuto.Checked = _services.Config.AutoSync; // set before subscribing: no spurious log line
         _miAuto.CheckedChanged += async (_, _) => await ToggleAutoSyncAsync();
+
+        _miHistory.Click += async (_, _) => await ShowHistoryAsync();
 
         // --- "Settings" menu ---
         _miDetect.Click += async (_, _) => await DetectEmulatorsAsync();
@@ -90,12 +108,8 @@ public partial class MainForm : Form
         _autoSyncTimer.Start();
 
         // Periodic cloud check to pick up changes made on other PCs.
-        if (_services.Local.RemoteCheckMinutes > 0)
-        {
-            _remoteCheckTimer.Interval = Math.Max(5, _services.Local.RemoteCheckMinutes) * 60_000;
-            _remoteCheckTimer.Tick += async (_, _) => await RemoteCheckTickAsync();
-            _remoteCheckTimer.Start();
-        }
+        _remoteCheckTimer.Tick += async (_, _) => await RemoteCheckTickAsync();
+        ApplyRemoteCheckInterval();
 
         // --- System tray icon with quick actions ---
         _tray.Icon = Icon ?? SystemIcons.Application;
@@ -179,6 +193,9 @@ public partial class MainForm : Form
             // 2. Shared configuration.
             await ReloadCloudAsync();
 
+            // Old history goes out in the background: nothing waits on it.
+            _ = _services.PruneHistoryAsync();
+
             // 3. Drive (where the saves actually live).
             await EnsureDriveAsync();
 
@@ -215,10 +232,22 @@ public partial class MainForm : Form
         foreach (var profile in _services.UnlinkedProfiles())
             Log($"⚠ '{profile.DisplayName}' has no folder on this PC: select it and use Sync > Set local folder...");
 
-        _miAuto.Checked = _services.Config.AutoSync;
+        SetAutoSyncItem(_services.Config.AutoSync);
+        ApplyRemoteCheckInterval(); // the cloud may carry a different period than the cache
         RefreshList();
         RebuildWatchers();
         UpdateStatusBar();
+    }
+
+    /// <summary>(Re)starts the periodic check with the current setting, or stops it when disabled.</summary>
+    private void ApplyRemoteCheckInterval()
+    {
+        int minutes = _services.Config.RemoteCheckMinutes;
+        _remoteCheckTimer.Stop();
+        if (minutes <= 0) return;
+
+        _remoteCheckTimer.Interval = Math.Max(5, minutes) * 60_000;
+        _remoteCheckTimer.Start();
     }
 
     private async Task EnsureDriveAsync()
@@ -321,6 +350,8 @@ public partial class MainForm : Form
 
     private async Task SetLocalFolderAsync()
     {
+        if (_syncing) return; // reachable from the list's double-click even while busy
+
         var profile = SelectedProfile();
         if (profile == null) return;
         if (!await RequireSignInAsync()) return;
@@ -379,6 +410,14 @@ public partial class MainForm : Form
         }
     }
 
+    private async Task ShowHistoryAsync()
+    {
+        if (!await RequireSignInAsync()) return;
+
+        using var history = new HistoryForm(_services);
+        history.ShowDialog(this);
+    }
+
     private async Task DetectEmulatorsAsync()
     {
         if (!await RequireSignInAsync()) return;
@@ -417,9 +456,25 @@ public partial class MainForm : Form
         }
     }
 
+    /// <summary>Sets the menu item without it looking like the user clicked it.</summary>
+    private void SetAutoSyncItem(bool enabled)
+    {
+        if (_miAuto.Checked == enabled) return;
+        _updatingAutoSyncItem = true;
+        try { _miAuto.Checked = enabled; }
+        finally { _updatingAutoSyncItem = false; }
+    }
+
     private async Task ToggleAutoSyncAsync()
     {
+        if (_updatingAutoSyncItem) return; // reflecting the cloud value, not a user choice
+
         Log(_miAuto.Checked ? "Auto-sync enabled." : "Auto-sync disabled.");
+
+        // Config is the single source of truth the timers read, so update it even
+        // when there is nobody to save it to yet.
+        _services.Config.AutoSync = _miAuto.Checked;
+
         try
         {
             if (_services.IsSignedIn)
@@ -467,15 +522,27 @@ public partial class MainForm : Form
 
     private void OnFolderChanged(string emulatorKey, string fullPath)
     {
-        // Ignore our own temp files and events generated by the sync itself.
+        // Ignore our own temp files.
         if (fullPath.EndsWith(".emusync-tmp", StringComparison.OrdinalIgnoreCase)) return;
-        if (_syncing || !IsHandleCreated) return;
+        if (!IsHandleCreated) return;
 
-        BeginInvoke(() =>
+        try
         {
-            _dirtyKeys.Add(emulatorKey);
-            _lastChangeUtc = DateTime.UtcNow;
-        });
+            BeginInvoke(() =>
+            {
+                // A sync that downloads files fires these events itself: recording
+                // them during a sync would loop forever, so they are noted apart
+                // and only kept when the sync turns out not to have written anything.
+                if (_inSync) _changedDuringSync.Add(emulatorKey);
+                else _dirtyKeys.Add(emulatorKey);
+                _lastChangeUtc = DateTime.UtcNow;
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // The window was closed between the check and the call: nothing to do.
+            // (ObjectDisposedException derives from this one, so it is covered too.)
+        }
     }
 
     /// <summary>
@@ -549,6 +616,9 @@ public partial class MainForm : Form
 
     private async Task SyncAsync(bool onlySelected)
     {
+        // The tray menu and the list stay clickable while a sync runs, and a
+        // re-entrant run would reset the mid-sync change tracking of the outer one.
+        if (_syncing) return;
         if (!await RequireSignInAsync()) return;
 
         List<EmulatorProfile> targets;
@@ -613,17 +683,60 @@ public partial class MainForm : Form
         int signIns = 0;
         bool abort = false;
 
-        foreach (var profile in targets)
-        {
-            if (abort) break;
+        // Anything the watchers report from here on is either our own downloads or
+        // a real change that arrived mid-sync; the two are told apart at the end.
+        _changedDuringSync.Clear();
+        var untouched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _inSync = true;
 
+        try
+        {
+            foreach (var profile in targets)
+            {
+                if (abort) break;
+                await SyncOneAsync(profile, engine, interactive, untouched);
+            }
+        }
+        finally
+        {
+            _inSync = false;
+        }
+
+        // A save written by the emulator while the sync was running would otherwise
+        // be lost until the next unrelated change. Folders this sync never wrote to
+        // are safe to trust, and so are folders it did not even look at — only the
+        // ones it downloaded into could be echoing its own writes back at us.
+        var syncedKeys = new HashSet<string>(targets.Select(p => p.Key), StringComparer.OrdinalIgnoreCase);
+        foreach (string key in _changedDuringSync)
+            if (!syncedKeys.Contains(key) || untouched.Contains(key)) _dirtyKeys.Add(key);
+        _changedDuringSync.Clear();
+
+        // Always persist what did succeed, even if we gave up half-way.
+        try
+        {
+            _services.Local.CacheFromCloud(_services.Config, _services.Profiles);
+            _services.Local.Save();
+        }
+        catch { /* the cache is an optimization, never a reason to fail */ }
+
+        RefreshList();
+        Log("Synchronization finished.");
+
+        // ---- local state shared by the loop above ----
+        async Task SyncOneAsync(EmulatorProfile profile, SyncEngine syncEngine, bool canPrompt,
+            HashSet<string> untouchedKeys)
+        {
             for (int attempt = 0; attempt < 2; attempt++)
             {
                 try
                 {
-                    await engine.SyncProfileAsync(profile, Log);
+                    var stats = await syncEngine.SyncProfileAsync(profile, Log);
+
+                    // "Untouched" means nothing was written into the local folder,
+                    // so any watcher event for it came from the emulator, not us.
+                    if (stats.Downloaded == 0 && stats.DeletedLocal == 0) untouchedKeys.Add(profile.Key);
                     _needsSignIn = false; // the tokens work: resume automatic syncing
-                    break;
+                    return;
                 }
                 catch (Exception ex) when (attempt == 0 && signIns < MaxSignIns &&
                                            GoogleDriveClient.IsInvalidGrant(ex))
@@ -631,7 +744,7 @@ public partial class MainForm : Form
                     signIns++;
                     Log("The Google Drive authorization has expired or was revoked.");
 
-                    if (!interactive)
+                    if (!canPrompt)
                     {
                         _needsSignIn = true;
                         Log("Sign in again with Sync > Sync all to resume automatic syncing.");
@@ -668,17 +781,6 @@ public partial class MainForm : Form
                 }
             }
         }
-
-        // Always persist what did succeed, even if we gave up half-way.
-        try
-        {
-            _services.Local.CacheFromCloud(_services.Config, _services.Profiles);
-            _services.Local.Save();
-        }
-        catch { /* the cache is an optimization, never a reason to fail */ }
-
-        RefreshList();
-        Log("Synchronization finished.");
     }
 
     /// <summary>Makes sure there is an EmuSync session before touching the cloud.</summary>
@@ -757,7 +859,7 @@ public partial class MainForm : Form
     private void SetBusy(bool busy)
     {
         _syncing = busy;
-        foreach (var mi in new[] { _miAdd, _miSetFolder, _miRemove, _miSyncSelected, _miSyncAll, _miDetect })
+        foreach (var mi in new[] { _miAdd, _miSetFolder, _miRemove, _miSyncSelected, _miSyncAll, _miDetect, _traySyncAll })
             mi.Enabled = !busy;
         UseWaitCursor = busy;
     }

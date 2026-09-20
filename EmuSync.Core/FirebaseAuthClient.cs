@@ -42,8 +42,13 @@ public class FirebaseSession
     /// <summary>True when the account signed in through Google (so Drive can reuse the same consent).</summary>
     public bool IsGoogleAccount { get; set; }
 
+    /// <summary>
+    /// True when the ID token is gone or about to expire. Written as a subtraction
+    /// of two dates on purpose: <c>IdTokenExpiryUtc - 5 min</c> would overflow for
+    /// a restored session, whose expiry starts at <see cref="DateTime.MinValue"/>.
+    /// </summary>
     [JsonIgnore]
-    public bool IsExpired => DateTime.UtcNow >= IdTokenExpiryUtc - TimeSpan.FromMinutes(5);
+    public bool IsExpired => IdTokenExpiryUtc - DateTime.UtcNow <= TimeSpan.FromMinutes(5);
 }
 
 /// <summary>Raised when Firebase rejects a credential or a request.</summary>
@@ -248,7 +253,8 @@ public class FirebaseAuthClient
         string body = await response.Content.ReadAsStringAsync(ct);
         if (!response.IsSuccessStatusCode) throw ParseError(body);
 
-        return JsonDocument.Parse(body).RootElement.Clone();
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.Clone();
     }
 
     private FirebaseSession Adopt(JsonElement json, bool isGoogle)

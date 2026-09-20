@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy Policy — EmuSync</title>
-<meta name="description" content="How EmuSync handles your data: it doesn't collect any.">
+<meta name="description" content="How EmuSync handles your data: your saves stay in your own Google Drive, and only settings and file checksums are stored in your account.">
 <link rel="icon" href="logo.png" type="image/png">
 <style>
   :root{
@@ -49,50 +49,67 @@
 <main class="wrap">
 
   <h1>Privacy Policy</h1>
-  <p class="updated">Last updated: 6 September 2026</p>
+  <p class="updated">Last updated: 20 September 2026</p>
 
   <p>
-    EmuSync is a free, open-source desktop application that copies your emulator
-    save files between your computer and your own Google Drive. This policy
-    explains what it does with your data. The short version: it does not collect
-    any.
+    EmuSync is a free, open-source desktop application that keeps your emulator
+    save files in sync between your computers, through your own Google Drive.
+    This policy explains what it does with your data.
   </p>
 
   <div class="callout">
     <p>
-      There is no EmuSync server. Your files travel directly between your
-      computer and Google Drive, and the developer has no access to them, to
-      your Google account, or to any information about your use of the app.
+      <b>Your save files never pass through us.</b> They travel directly between
+      your computer and your own Google Drive. An EmuSync account — hosted on
+      Google Firebase — holds only your settings and a list of file names and
+      checksums, so that your computers can agree on what is already in sync.
     </p>
   </div>
 
   <h2>What the app accesses</h2>
   <ul>
     <li><b>The folders you choose.</b> EmuSync reads and writes only the local
-        folders you add as sync profiles.</li>
+        save folders you add, plus its own settings folder.</li>
     <li><b>Your Google Drive, through the <code>drive.file</code> scope.</b> This
         scope restricts the app to files and folders it creates itself. It cannot
         see, read, or modify anything else in your Drive.</li>
-    <li><b>Google account sign-in.</b> Handled by Google's own consent screen. The
-        app receives an access token, never your password.</li>
+    <li><b>Sign-in.</b> Either Google — handled by Google's own consent screen, so
+        the app receives a token and never your password — or an email address and
+        a password, handled by Firebase Authentication. Passwords are never stored
+        by EmuSync in any readable form.</li>
   </ul>
 
   <h2>What is stored, and where</h2>
   <ul>
-    <li>Your save files are uploaded to a folder named <code>EmuSync</code> in your
-        own Google Drive, under your own account and storage quota.</li>
-    <li>The authorization token and the app settings (the list of folders and
-        options) are stored locally on your computer, under
-        <code>%APPDATA%\EmuSync</code>. They never leave your machine.</li>
-    <li>Nothing is stored on any server operated by the developer, because there
-        is none.</li>
+    <li><b>Your saves: in your Google Drive.</b> Uploaded to a folder named
+        <code>EmuSync</code>, with one subfolder per emulator, under your own
+        account and storage quota. They are stored nowhere else.</li>
+    <li><b>Your account and settings: in Firebase.</b> The project is administered
+        by the developer and hosted by Google. It contains your email address and
+        account identifier, the list of emulators you sync with their labels, the
+        names you give your devices and the local folders configured on each, and
+        an index of the synced files: relative path, size, modification date and
+        MD5 checksum. It also keeps a history of your syncs — which device did
+        what, when, and to which files — for one year, after which it is deleted
+        automatically. <b>No file content is ever uploaded there.</b></li>
+    <li><b>On your computer.</b> The authorization tokens (the Firebase one
+        encrypted for your Windows user), a copy of the settings and the record of
+        the last sync, under <code>%APPDATA%\EmuSync</code>.</li>
   </ul>
+  <p>
+    Security rules restrict each account's data so that it can only be read or
+    written by that account. The developer, as administrator of the Firebase
+    project, has technical access to the stored data described above, and does not
+    use it for any purpose other than operating the sync.
+  </p>
 
   <h2>What is collected</h2>
   <p>
-    Nothing. EmuSync contains no analytics, no telemetry, no crash reporting, no
-    advertising, and no third-party tracking of any kind. No personal data is
-    collected, transmitted to the developer, sold, or shared.
+    Beyond what is listed above, nothing. EmuSync contains no analytics, no
+    telemetry, no crash reporting, no advertising, and no third-party tracking of
+    any kind. Nothing is sold or shared with anyone. Firebase records the usual
+    technical information needed to operate an authentication service, such as
+    sign-in timestamps.
   </p>
 
   <h2>Data sharing</h2>
@@ -104,21 +121,28 @@
     including the Limited Use requirements.
   </p>
 
-  <h2>Removing access</h2>
+  <h2>Removing access, and deleting your data</h2>
   <ul>
-    <li>Sign out from within the app (<i>Settings → Change Google account</i>), which
-        deletes the stored token.</li>
-    <li>Revoke the app entirely at
+    <li>Sign out from within the app (<i>Settings → Sign out of EmuSync</i>), which
+        deletes the tokens stored on that computer.</li>
+    <li>Disconnect Drive only, keeping your account: <i>Settings → Change Google
+        Drive account</i>.</li>
+    <li>Revoke the app's access to your Google account entirely at
         <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
     <li>Delete the <code>EmuSync</code> folder in your Google Drive to remove the
         uploaded saves, and uninstall by deleting <code>EmuSync.exe</code> and the
         <code>%APPDATA%\EmuSync</code> folder.</li>
+    <li>To have your EmuSync account and everything stored with it erased, open an
+        issue at
+        <a href="https://github.com/Weskerw/EmuSync/issues">github.com/Weskerw/EmuSync/issues</a>
+        from the address you signed up with. Your saves on Drive are yours and are
+        not touched by this.</li>
   </ul>
 
   <h2>Children</h2>
   <p>
-    EmuSync is not directed at children under 13 and does not knowingly collect
-    any information from them — or, for that matter, from anyone.
+    EmuSync is not directed at children under 13, who should not create an
+    account. No information is knowingly collected from them.
   </p>
 
   <h2>Changes</h2>

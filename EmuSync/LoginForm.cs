@@ -3,7 +3,9 @@ using EmuSync.Core;
 namespace EmuSync;
 
 /// <summary>
-/// EmuSync account sign-in (Firebase Authentication).
+/// EmuSync account sign-in (Firebase Authentication). The layout lives in
+/// LoginForm.Designer.cs so it can be opened in the Visual Studio designer;
+/// this file only holds the behaviour.
 ///
 /// Two routes, as chosen in the Firebase console:
 ///  • "Continue with Google": one browser consent that covers both the EmuSync
@@ -11,79 +13,28 @@ namespace EmuSync;
 ///  • email + password: the account is created here; Drive is authorized right
 ///    afterwards, since the saves still live in the user's own Drive.
 /// </summary>
-public class LoginForm : Form
+public partial class LoginForm : Form
 {
     private readonly EmuSyncServices _services;
 
-    private readonly Label _title = new();
-    private readonly Label _subtitle = new();
-    private readonly Button _btnGoogle = new();
-    private readonly Label _or = new();
-    private readonly Label _lblEmail = new();
-    private readonly TextBox _email = new();
-    private readonly Label _lblPassword = new();
-    private readonly TextBox _password = new();
-    private readonly Button _btnPrimary = new();
-    private readonly LinkLabel _linkToggle = new();
-    private readonly LinkLabel _linkForgot = new();
-    private readonly Label _status = new();
-
     private bool _signUpMode;
+
+    /// <summary>Parameterless constructor required by the Visual Studio designer.</summary>
+    private LoginForm()
+    {
+        InitializeComponent();
+        _services = null!;
+    }
 
     public LoginForm(EmuSyncServices services)
     {
+        InitializeComponent();
         _services = services;
 
-        Text = "EmuSync – Sign in";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        StartPosition = FormStartPosition.CenterParent;
-        MaximizeBox = false;
-        MinimizeBox = false;
-        ClientSize = new Size(420, 400);
-
-        _title.Text = "Sign in to EmuSync";
-        _title.Font = new Font(Font.FontFamily, 13f, FontStyle.Bold);
-        _title.SetBounds(24, 20, 380, 30);
-
-        _subtitle.Text = "Your settings live in your EmuSync account; the saves stay in your own Google Drive.";
-        _subtitle.SetBounds(24, 50, 372, 40);
-
-        _btnGoogle.Text = "Continue with Google";
-        _btnGoogle.SetBounds(24, 98, 372, 36);
         _btnGoogle.Click += async (_, _) => await GoogleSignInAsync();
-
-        _or.Text = "— or use an email address —";
-        _or.TextAlign = ContentAlignment.MiddleCenter;
-        _or.SetBounds(24, 144, 372, 24);
-
-        _lblEmail.Text = "Email";
-        _lblEmail.SetBounds(24, 176, 100, 20);
-        _email.SetBounds(24, 196, 372, 24);
-
-        _lblPassword.Text = "Password";
-        _lblPassword.SetBounds(24, 228, 100, 20);
-        _password.SetBounds(24, 248, 372, 24);
-        _password.UseSystemPasswordChar = true;
-
-        _btnPrimary.SetBounds(24, 284, 372, 34);
         _btnPrimary.Click += async (_, _) => await EmailSignInAsync();
-
-        _linkToggle.SetBounds(24, 326, 250, 20);
         _linkToggle.LinkClicked += (_, _) => SetMode(!_signUpMode);
-
-        _linkForgot.Text = "Forgot your password?";
-        _linkForgot.TextAlign = ContentAlignment.TopRight;
-        _linkForgot.SetBounds(256, 326, 140, 20);
         _linkForgot.LinkClicked += async (_, _) => await ResetPasswordAsync();
-
-        _status.SetBounds(24, 350, 372, 40);
-        _status.ForeColor = SystemColors.GrayText;
-
-        Controls.AddRange(new Control[]
-        {
-            _title, _subtitle, _btnGoogle, _or, _lblEmail, _email, _lblPassword, _password,
-            _btnPrimary, _linkToggle, _linkForgot, _status
-        });
 
         AcceptButton = _btnPrimary;
         SetMode(signUp: false);

@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EmuSync — Sync your emulator saves with Google Drive</title>
-<meta name="description" content="EmuSync keeps your emulator save files and memory cards in sync across your PCs through your own Google Drive. Free, open source, Windows.">
+<title>EmuSync — Your emulator saves, on every PC</title>
+<meta name="description" content="EmuSync keeps your emulator save files and memory cards in sync across your PCs, in your own Google Drive, grouped by emulator. Free, open source, Windows.">
 <link rel="icon" href="logo.png" type="image/png">
 <meta property="og:title" content="EmuSync">
-<meta property="og:description" content="Sync your emulator saves with Google Drive.">
+<meta property="og:description" content="Your emulator saves, in sync on every PC.">
 <meta property="og:image" content="logo.png">
 <meta property="og:type" content="website">
 <style>
@@ -114,8 +114,8 @@
     <h1>Your emulator saves,<br>on every PC</h1>
     <p class="tagline">
       EmuSync keeps the save files and memory cards of your emulators in sync
-      through your own Google Drive. Stop a run on the desktop, pick it up on
-      the laptop.
+      across your computers, in your own Google Drive. Stop a run on the desktop,
+      pick it up on the laptop.
     </p>
     <div class="cta">
       <a class="btn btn-primary" href="https://github.com/Weskerw/EmuSync/releases/latest">Download for Windows</a>
@@ -128,14 +128,15 @@
     <div class="wrap">
       <h2>What it does</h2>
       <p class="lead">
-        Point EmuSync at the save folder of each emulator you use. From then on
-        it looks after itself.
+        EmuSync looks for the emulators you have installed, then looks after
+        itself.
       </p>
       <div class="grid">
         <div class="card">
-          <h3>One profile per emulator</h3>
-          <p>PCSX2, Dolphin, RetroArch, anything else — each folder syncs to its own
-             folder on your Drive, subfolders included.</p>
+          <h3>It knows your emulators</h3>
+          <p>PCSX2, Dolphin, RPCS3, PPSSPP, RetroArch and a dozen more: EmuSync
+             finds their save folders for you, and each emulator gets its own
+             folder on your Drive.</p>
         </div>
         <div class="card">
           <h3>Syncs the moment you save</h3>
@@ -143,24 +144,26 @@
              finishes writing. No polling, no measurable CPU or disk cost.</p>
         </div>
         <div class="card">
-          <h3>Picks up other PCs</h3>
-          <p>A periodic check pulls down saves that another machine uploaded, so
-             the newest progress is always the one waiting for you.</p>
+          <h3>Set up once, not once per PC</h3>
+          <p>Sign in on another computer and your emulator list is already there.
+             EmuSync just looks for the matching folders on that machine.</p>
         </div>
         <div class="card">
           <h3>Never overwrites blindly</h3>
           <p>Files are compared by content hash first. If they differ, the more
-             recently modified one wins — in either direction.</p>
+             recently modified one wins — in either direction — and a genuine
+             clash is reported, not resolved by guessing.</p>
+        </div>
+        <div class="card">
+          <h3>Deletions travel too, carefully</h3>
+          <p>Delete a save on one PC and it goes on the others. What is removed
+             lands in the Drive trash and in a local backup folder first, and an
+             empty folder never wipes anything.</p>
         </div>
         <div class="card">
           <h3>Out of your way</h3>
           <p>Optionally starts with Windows, hidden in the system tray, with
              sync and exit one click away.</p>
-        </div>
-        <div class="card">
-          <h3>Sign in once</h3>
-          <p>Connect your Google account on first launch. The token is stored on
-             your PC and you are not asked again.</p>
         </div>
       </div>
     </div>
@@ -172,10 +175,13 @@
       <p class="lead">Three minutes of setup, then you can forget about it.</p>
       <ol class="steps">
         <li><b>Download and run EmuSync.</b> It is one executable — nothing to install.</li>
-        <li><b>Sign in with Google.</b> Your browser opens once to grant access to the
-            app's own folder on your Drive.</li>
-        <li><b>Add your save folders.</b> Give each one a name, and EmuSync mirrors it
-            to <code>EmuSync/&lt;name&gt;</code> on Drive from then on.</li>
+        <li><b>Create your EmuSync account.</b> With Google or with an email address.
+            It is what carries your setup from one computer to the next.</li>
+        <li><b>Connect your Google Drive.</b> One browser consent, granting access to
+            the app's own folder and nothing else. With Google sign-in it happens in
+            the same step.</li>
+        <li><b>Confirm the emulators it found.</b> Each one syncs to
+            <code>EmuSync/&lt;emulator&gt;</code> on your Drive from then on.</li>
       </ol>
     </div>
   </section>
@@ -184,12 +190,15 @@
     <div class="wrap">
       <h2>Your saves stay yours</h2>
       <ul>
-        <li>Files go straight from your PC to <b>your own Google Drive</b>. There is no
-            EmuSync server in the middle, and no account to create.</li>
+        <li>The save files go straight from your PC to <b>your own Google Drive</b>,
+            under your own account and storage quota.</li>
         <li>EmuSync asks for the <code>drive.file</code> permission only, which limits it
             to the files it creates itself. The rest of your Drive stays invisible to it.</li>
-        <li>Nothing is collected, tracked, or sent anywhere else. The source code is
-            public, so you can check.</li>
+        <li>Your EmuSync account holds your settings and a list of file names and
+            checksums, so your computers agree on what is in sync. <b>Never the
+            contents of a save.</b></li>
+        <li>No analytics, no telemetry, no tracking, nothing sold to anyone. The source
+            code is public, so you can check.</li>
       </ul>
       <a class="btn btn-ghost" href="/privacy">Read the privacy policy</a>
     </div>

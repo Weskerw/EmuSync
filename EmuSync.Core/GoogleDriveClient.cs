@@ -76,6 +76,18 @@ public class GoogleDriveClient : IDisposable
     /// <summary>Forces a fresh consent (used by "change account" and after an invalid_grant).</summary>
     public Task ReauthorizeAsync(CancellationToken ct = default) => AuthorizeAsync(force: true, ct);
 
+    /// <summary>
+    /// Re-runs the (silent) authorization to obtain a fresh Google ID token.
+    /// Google ID tokens are only valid for an hour, so the one captured when the
+    /// app connected is usually stale by the time it would be exchanged for a
+    /// Firebase session; this reuses the stored refresh token, no browser needed.
+    /// </summary>
+    public async Task<string?> RefreshIdTokenAsync(CancellationToken ct = default)
+    {
+        await AuthorizeAsync(force: false, ct);
+        return LastIdToken;
+    }
+
     private async Task AuthorizeAsync(bool force, CancellationToken ct)
     {
         _service?.Dispose();

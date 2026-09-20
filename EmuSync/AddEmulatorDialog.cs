@@ -6,20 +6,13 @@ namespace EmuSync;
 /// Picks an emulator from the catalog and the folder holding its saves on this
 /// machine. The emulator choice decides the remote folder (EmuSync/&lt;key&gt;),
 /// which is what keeps the same console together across devices.
+///
+/// The layout lives in AddEmulatorDialog.Designer.cs; this file only holds the
+/// behaviour.
 /// </summary>
-public class AddEmulatorDialog : Form
+public partial class AddEmulatorDialog : Form
 {
     private const string OtherLabel = "Other (custom)...";
-
-    private readonly ComboBox _emulator = new();
-    private readonly Label _lblCustom = new();
-    private readonly TextBox _customName = new();
-    private readonly Label _lblFolder = new();
-    private readonly TextBox _folder = new();
-    private readonly Button _browse = new();
-    private readonly Label _hint = new();
-    private readonly Button _ok = new();
-    private readonly Button _cancel = new();
 
     private readonly HashSet<string> _alreadyUsed;
 
@@ -29,53 +22,28 @@ public class AddEmulatorDialog : Form
     /// <summary>The chosen local folder.</summary>
     public string SelectedPath => _folder.Text.Trim();
 
+    /// <summary>Parameterless constructor required by the Visual Studio designer.</summary>
+    private AddEmulatorDialog()
+    {
+        InitializeComponent();
+        _alreadyUsed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
     /// <param name="alreadyUsed">Keys already enrolled, hidden from the list.</param>
     /// <param name="lockedTo">When set, the emulator is fixed and only the folder can be chosen.</param>
     public AddEmulatorDialog(IEnumerable<string> alreadyUsed, EmulatorInfo? lockedTo = null)
     {
+        InitializeComponent();
+
         _alreadyUsed = new HashSet<string>(alreadyUsed, StringComparer.OrdinalIgnoreCase);
 
-        Text = lockedTo == null ? "Add an emulator" : $"Save folder – {lockedTo.DisplayName}";
-        FormBorderStyle = FormBorderStyle.FixedDialog;
-        StartPosition = FormStartPosition.CenterParent;
-        MaximizeBox = false;
-        MinimizeBox = false;
-        ClientSize = new Size(520, 260);
+        if (lockedTo != null) Text = $"Save folder – {lockedTo.DisplayName}";
 
-        var lblEmulator = new Label { Text = "Emulator / console", AutoSize = true };
-        lblEmulator.SetBounds(20, 18, 200, 20);
-
-        _emulator.SetBounds(20, 40, 480, 24);
-        _emulator.DropDownStyle = ComboBoxStyle.DropDownList;
         _emulator.SelectedIndexChanged += (_, _) => OnEmulatorChanged();
-
-        _lblCustom.Text = "Name";
-        _lblCustom.SetBounds(20, 74, 100, 20);
-        _customName.SetBounds(20, 94, 480, 24);
-
-        _lblFolder.Text = "Local save folder";
-        _lblFolder.SetBounds(20, 128, 200, 20);
-        _folder.SetBounds(20, 148, 390, 24);
-        _browse.Text = "Browse...";
-        _browse.SetBounds(418, 147, 82, 26);
         _browse.Click += (_, _) => Browse();
-
-        _hint.SetBounds(20, 178, 480, 36);
-        _hint.ForeColor = SystemColors.GrayText;
-
-        _ok.Text = "OK";
-        _ok.SetBounds(334, 220, 80, 28);
         _ok.Click += (_, _) => Confirm();
-        _cancel.Text = "Cancel";
-        _cancel.SetBounds(420, 220, 80, 28);
-        _cancel.DialogResult = DialogResult.Cancel;
 
-        Controls.AddRange(new Control[]
-        {
-            lblEmulator, _emulator, _lblCustom, _customName, _lblFolder, _folder, _browse, _hint, _ok, _cancel
-        });
         AcceptButton = _ok;
-        CancelButton = _cancel;
 
         if (lockedTo != null)
         {

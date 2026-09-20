@@ -19,6 +19,15 @@ public class EmuSyncServices : IDisposable
         Drive = new GoogleDriveClient(googleAuth);
         Local = AppConfig.Load();
         Profiles = Local.ProfilesFromCache();
+
+        // Until Firestore answers, the cached settings ARE the configuration:
+        // this keeps the menu checkbox and the timers agreeing with each other
+        // while offline or before the first load.
+        Config = new CloudConfig
+        {
+            AutoSync = Local.AutoSync,
+            RemoteCheckMinutes = Local.RemoteCheckMinutes
+        };
     }
 
     public FirebaseOptions Firebase { get; }
@@ -63,16 +72,24 @@ public class EmuSyncServices : IDisposable
     /// </summary>
     public async Task SignInWithGoogleAsync(bool forceAccountPicker = false, CancellationToken ct = default)
     {
-        if (forceAccountPicker) await Drive.ReauthorizeAsync(ct);
-        else await Drive.ConnectAsync(ct);
+        // Always take a fresh ID token: one captured earlier in the session would
+        // already be past its one-hour life and Firebase would reject it.
+        string? idToken = forceAccountPicker
+            ? await ReauthorizeForIdTokenAsync(ct)
+            : await Drive.RefreshIdTokenAsync(ct);
 
-        string? idToken = Drive.LastIdToken;
         if (string.IsNullOrEmpty(idToken))
             throw new FirebaseAuthException("NO_ID_TOKEN",
                 "Google did not return an ID token: check that the OAuth client requests the " +
                 "'openid' scope and belongs to the same project as Firebase.");
 
         await Auth.SignInWithGoogleAsync(idToken, ct);
+    }
+
+    private async Task<string?> ReauthorizeForIdTokenAsync(CancellationToken ct)
+    {
+        await Drive.ReauthorizeAsync(ct);
+        return Drive.LastIdToken;
     }
 
     /// <summary>Connects Drive on its own (email/password users, or after a token reset).</summary>
@@ -84,7 +101,14 @@ public class EmuSyncServices : IDisposable
         Auth.SignOut();
         Drive.SignOut();
         Profiles = new List<EmulatorProfile>();
-        Config = new CloudConfig();
+
+        // Keep the user's own preferences rather than snapping back to the
+        // defaults: the menu still shows them and they apply on the next sign-in.
+        Config = new CloudConfig
+        {
+            AutoSync = Local.AutoSync,
+            RemoteCheckMinutes = Local.RemoteCheckMinutes
+        };
     }
 
     // --------------------------------------------------------- cloud config
@@ -117,7 +141,7 @@ public class EmuSyncServices : IDisposable
             existing.Enabled = true;
         }
 
-        Local.SetLocalPath(emulator.Key, localPath);
+        LinkLocalPath(emulator.Key, localPath);
         Local.Save();
 
         await Cloud.SaveConfigAsync(Config, ct);
@@ -128,7 +152,7 @@ public class EmuSyncServices : IDisposable
     /// <summary>Points an already-enrolled emulator at a folder on this device.</summary>
     public async Task SetLocalPathAsync(string key, string localPath, CancellationToken ct = default)
     {
-        Local.SetLocalPath(key, localPath);
+        LinkLocalPath(key, localPath);
         Local.Save();
         await Cloud.SaveDeviceAsync(Local, ct);
         await RefreshProfilesAsync(ct);
@@ -143,6 +167,10 @@ public class EmuSyncServices : IDisposable
     {
         Local.SetLocalPath(key, null);
         Local.Save();
+
+        // The snapshot describes a folder we no longer watch: keeping it would
+        // make a future re-add look like a mass deletion.
+        DeviceIndexStore.Delete(key);
 
         if (everywhere)
         {
@@ -197,7 +225,7 @@ public class EmuSyncServices : IDisposable
         foreach (var profile in UnlinkedProfiles())
         {
             if (!detected.TryGetValue(profile.Key, out string? path)) continue;
-            Local.SetLocalPath(profile.Key, path);
+            LinkLocalPath(profile.Key, path);
             linked++;
         }
 
@@ -210,7 +238,35 @@ public class EmuSyncServices : IDisposable
         return linked;
     }
 
-    public SyncEngine CreateEngine() => new(Drive, Cloud, Local.DeviceId);
+    /// <summary>
+    /// Points an emulator at a folder on this device. The single place that does
+    /// so, because every such change must drop the sync snapshot: it describes the
+    /// contents of the *previous* folder, and reading it against a new one looks
+    /// exactly like the user having deleted every save.
+    /// </summary>
+    private void LinkLocalPath(string key, string localPath)
+    {
+        if (!string.Equals(Local.GetLocalPath(key), localPath, StringComparison.OrdinalIgnoreCase))
+            DeviceIndexStore.Delete(key);
+
+        Local.SetLocalPath(key, localPath);
+    }
+
+    public SyncEngine CreateEngine() => new(Drive, Cloud, Local.DeviceId, Local.DeviceName);
+
+    /// <summary>The sync history of every device, newest first.</summary>
+    public Task<List<SyncRunLog>> LoadHistoryAsync(int limit = 200, CancellationToken ct = default) =>
+        Cloud.ListRunsAsync(limit, ct);
+
+    /// <summary>
+    /// Drops history past its retention period. Best-effort and silent: it runs in
+    /// the background at startup and nothing depends on it.
+    /// </summary>
+    public async Task PruneHistoryAsync(CancellationToken ct = default)
+    {
+        try { await Cloud.PruneRunsAsync(ct: ct); }
+        catch { /* offline, or rules refused: try again next launch */ }
+    }
 
     public void Dispose() => Drive.Dispose();
 }

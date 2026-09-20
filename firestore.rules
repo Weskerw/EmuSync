@@ -1,0 +1,35 @@
+rules_version = '2';
+
+// EmuSync — Firestore security rules.
+//
+// Everything a user owns lives under users/{uid}, so a single ownership check
+// covers settings, devices, the per-emulator file index and the sync history.
+// Nothing is readable by anyone else, and there is no public collection at all.
+//
+// Deploy with:  firebase deploy --only firestore:rules
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // users/{uid}
+    //   ├── devices/{deviceId}    local save folders of that machine
+    //   ├── emulators/{key}       index of the synced files + deletion tombstones
+    //   └── activity/{runId}      sync history, one document per run
+    match /users/{uid} {
+      allow read, write: if isOwner(uid);
+
+      match /{document=**} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    // Anything outside a user's own tree is denied.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
