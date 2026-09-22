@@ -60,19 +60,21 @@ public class SyncEngine
     /// <summary>Tolerance for time comparison (FAT filesystems round to 2 s).</summary>
     private static readonly TimeSpan Tolerance = TimeSpan.FromSeconds(3);
 
-    private const string RootFolderName = "EmuSync";
-
     private readonly GoogleDriveClient _drive;
     private readonly CloudStore _cloud;
     private readonly string _deviceId;
     private readonly string _deviceName;
 
-    public SyncEngine(GoogleDriveClient drive, CloudStore cloud, string deviceId, string deviceName)
+    /// <summary>Root folder on Drive, as configured by the user.</summary>
+    private readonly string _rootPath;
+
+    public SyncEngine(GoogleDriveClient drive, CloudStore cloud, string deviceId, string deviceName, string rootPath)
     {
         _drive = drive;
         _cloud = cloud;
         _deviceId = deviceId;
         _deviceName = deviceName;
+        _rootPath = DrivePath.Normalize(rootPath);
     }
 
     /// <summary>
@@ -149,8 +151,8 @@ public class SyncEngine
 
         log($"— {profile.DisplayName} ({profile.Console}) —");
 
-        // 1. Remote folder: EmuSync/<emulator key>
-        string rootId = await _drive.EnsureFolderAsync(RootFolderName, null, ct);
+        // 1. Remote folder: <configured folder>/<emulator key>
+        string rootId = await _drive.EnsurePathAsync(_rootPath, ct);
         string emulatorFolderId = await _drive.EnsureFolderAsync(profile.Key, rootId, ct);
 
         // 2. The three states.
@@ -158,6 +160,14 @@ public class SyncEngine
         var remote = await _drive.ListRecursiveAsync(emulatorFolderId, ct);
         var index = await _cloud.LoadIndexAsync(profile.Key, ct);
         var snapshot = DeviceIndexStore.Load(profile.Key);
+
+        // A snapshot taken against a different Drive folder says nothing about
+        // this one: start over rather than read it as a pile of deletions.
+        if (snapshot.Files.Count > 0 && !string.Equals(snapshot.RootPath, _rootPath, StringComparison.OrdinalIgnoreCase))
+        {
+            log($"The Drive folder changed ({snapshot.RootPath} → {_rootPath}): starting from a clean state.");
+            snapshot = new DeviceSnapshot { EmulatorKey = profile.Key };
+        }
 
         var local = Directory.EnumerateFiles(profile.LocalPath, "*", SearchOption.AllDirectories)
             .Where(p => !p.EndsWith(".emusync-tmp", StringComparison.OrdinalIgnoreCase))
@@ -177,7 +187,7 @@ public class SyncEngine
         if (!allowLocalDeletions)
             log("⚠ The remote folder is empty: nothing will be deleted locally.");
 
-        var newSnapshot = new DeviceSnapshot { EmulatorKey = profile.Key };
+        var newSnapshot = new DeviceSnapshot { EmulatorKey = profile.Key, RootPath = _rootPath };
 
         var allPaths = local.Keys
             .Union(remote.Files.Keys, StringComparer.OrdinalIgnoreCase)

@@ -5,25 +5,23 @@ partial class MainForm
     /// <summary>Required designer variable.</summary>
     private System.ComponentModel.IContainer components = null!;
 
+    // The menu bar holds only what is not a day-to-day action: the settings
+    // window and quitting. Everything else is one click away on the toolbar,
+    // and the settings that used to be checkable menu items now live in the
+    // settings window, where a checkbox looks like a checkbox.
     private System.Windows.Forms.MenuStrip _menu;
-    private System.Windows.Forms.ToolStripMenuItem _syncMenu;
-    private System.Windows.Forms.ToolStripMenuItem _miAdd;
-    private System.Windows.Forms.ToolStripMenuItem _miSetFolder;
-    private System.Windows.Forms.ToolStripMenuItem _miRemove;
-    private System.Windows.Forms.ToolStripSeparator _sepFolders;
-    private System.Windows.Forms.ToolStripMenuItem _miSyncSelected;
-    private System.Windows.Forms.ToolStripMenuItem _miSyncAll;
-    private System.Windows.Forms.ToolStripSeparator _sepAuto;
-    private System.Windows.Forms.ToolStripMenuItem _miAuto;
-    private System.Windows.Forms.ToolStripSeparator _sepHistory;
-    private System.Windows.Forms.ToolStripMenuItem _miHistory;
-    private System.Windows.Forms.ToolStripMenuItem _settingsMenu;
-    private System.Windows.Forms.ToolStripMenuItem _miDetect;
-    private System.Windows.Forms.ToolStripSeparator _sepAccount;
-    private System.Windows.Forms.ToolStripMenuItem _miChangeAccount;
-    private System.Windows.Forms.ToolStripMenuItem _miSignOut;
-    private System.Windows.Forms.ToolStripSeparator _sepStartup;
-    private System.Windows.Forms.ToolStripMenuItem _miStartWithWindows;
+    private System.Windows.Forms.ToolStripMenuItem _miSettings;
+    private System.Windows.Forms.ToolStripMenuItem _miExit;
+
+    private System.Windows.Forms.ToolStrip _toolbar;
+    private System.Windows.Forms.ToolStripButton _tbSyncAll;
+    private System.Windows.Forms.ToolStripButton _tbSyncSelected;
+    private System.Windows.Forms.ToolStripSeparator _tbSep1;
+    private System.Windows.Forms.ToolStripButton _tbAdd;
+    private System.Windows.Forms.ToolStripButton _tbSetFolder;
+    private System.Windows.Forms.ToolStripButton _tbRemove;
+    private System.Windows.Forms.ToolStripSeparator _tbSep2;
+    private System.Windows.Forms.ToolStripButton _tbHistory;
 
     private System.Windows.Forms.SplitContainer _split;
     private System.Windows.Forms.ListView _list;
@@ -66,24 +64,17 @@ partial class MainForm
     {
         this.components = new System.ComponentModel.Container();
         this._menu = new System.Windows.Forms.MenuStrip();
-        this._syncMenu = new System.Windows.Forms.ToolStripMenuItem();
-        this._miAdd = new System.Windows.Forms.ToolStripMenuItem();
-        this._miSetFolder = new System.Windows.Forms.ToolStripMenuItem();
-        this._miRemove = new System.Windows.Forms.ToolStripMenuItem();
-        this._sepFolders = new System.Windows.Forms.ToolStripSeparator();
-        this._miSyncSelected = new System.Windows.Forms.ToolStripMenuItem();
-        this._miSyncAll = new System.Windows.Forms.ToolStripMenuItem();
-        this._sepAuto = new System.Windows.Forms.ToolStripSeparator();
-        this._miAuto = new System.Windows.Forms.ToolStripMenuItem();
-        this._sepHistory = new System.Windows.Forms.ToolStripSeparator();
-        this._miHistory = new System.Windows.Forms.ToolStripMenuItem();
-        this._settingsMenu = new System.Windows.Forms.ToolStripMenuItem();
-        this._miDetect = new System.Windows.Forms.ToolStripMenuItem();
-        this._sepAccount = new System.Windows.Forms.ToolStripSeparator();
-        this._miChangeAccount = new System.Windows.Forms.ToolStripMenuItem();
-        this._miSignOut = new System.Windows.Forms.ToolStripMenuItem();
-        this._sepStartup = new System.Windows.Forms.ToolStripSeparator();
-        this._miStartWithWindows = new System.Windows.Forms.ToolStripMenuItem();
+        this._miSettings = new System.Windows.Forms.ToolStripMenuItem();
+        this._miExit = new System.Windows.Forms.ToolStripMenuItem();
+        this._toolbar = new System.Windows.Forms.ToolStrip();
+        this._tbSyncAll = new System.Windows.Forms.ToolStripButton();
+        this._tbSyncSelected = new System.Windows.Forms.ToolStripButton();
+        this._tbSep1 = new System.Windows.Forms.ToolStripSeparator();
+        this._tbAdd = new System.Windows.Forms.ToolStripButton();
+        this._tbSetFolder = new System.Windows.Forms.ToolStripButton();
+        this._tbRemove = new System.Windows.Forms.ToolStripButton();
+        this._tbSep2 = new System.Windows.Forms.ToolStripSeparator();
+        this._tbHistory = new System.Windows.Forms.ToolStripButton();
         this._split = new System.Windows.Forms.SplitContainer();
         this._list = new System.Windows.Forms.ListView();
         this._colEmulator = new System.Windows.Forms.ColumnHeader();
@@ -103,6 +94,7 @@ partial class MainForm
         this._autoSyncTimer = new System.Windows.Forms.Timer(this.components);
         this._remoteCheckTimer = new System.Windows.Forms.Timer(this.components);
         this._menu.SuspendLayout();
+        this._toolbar.SuspendLayout();
         ((System.ComponentModel.ISupportInitialize)(this._split)).BeginInit();
         this._split.Panel1.SuspendLayout();
         this._split.Panel2.SuspendLayout();
@@ -114,146 +106,104 @@ partial class MainForm
         // _menu
         //
         this._menu.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this._syncMenu,
-            this._settingsMenu});
+            this._miSettings,
+            this._miExit});
         this._menu.Location = new System.Drawing.Point(0, 0);
         this._menu.Name = "_menu";
         this._menu.Size = new System.Drawing.Size(860, 24);
         this._menu.TabIndex = 0;
-        this._menu.Text = "menuStrip";
         //
-        // _syncMenu
+        // _miSettings
         //
-        this._syncMenu.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this._miAdd,
-            this._miSetFolder,
-            this._miRemove,
-            this._sepFolders,
-            this._miSyncSelected,
-            this._miSyncAll,
-            this._sepAuto,
-            this._miAuto,
-            this._sepHistory,
-            this._miHistory});
-        this._syncMenu.Name = "_syncMenu";
-        this._syncMenu.Size = new System.Drawing.Size(44, 20);
-        this._syncMenu.Text = "&Sync";
+        this._miSettings.Name = "_miSettings";
+        this._miSettings.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Oemcomma)));
+        this._miSettings.Size = new System.Drawing.Size(61, 20);
+        this._miSettings.Text = "&Settings";
         //
-        // _miAdd
+        // _miExit
         //
-        this._miAdd.Name = "_miAdd";
-        this._miAdd.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.N)));
-        this._miAdd.Size = new System.Drawing.Size(280, 22);
-        this._miAdd.Text = "&Add emulator...";
+        this._miExit.Name = "_miExit";
+        this._miExit.Size = new System.Drawing.Size(38, 20);
+        this._miExit.Text = "E&xit";
         //
-        // _miSetFolder
+        // _toolbar
         //
-        this._miSetFolder.Name = "_miSetFolder";
-        this._miSetFolder.Size = new System.Drawing.Size(280, 22);
-        this._miSetFolder.Text = "Set &local folder...";
+        this._toolbar.GripStyle = System.Windows.Forms.ToolStripGripStyle.Hidden;
+        this._toolbar.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this._tbSyncAll,
+            this._tbSyncSelected,
+            this._tbSep1,
+            this._tbAdd,
+            this._tbSetFolder,
+            this._tbRemove,
+            this._tbSep2,
+            this._tbHistory});
+        this._toolbar.Location = new System.Drawing.Point(0, 24);
+        this._toolbar.Name = "_toolbar";
+        this._toolbar.Padding = new System.Windows.Forms.Padding(4, 2, 4, 2);
+        this._toolbar.Size = new System.Drawing.Size(860, 27);
+        this._toolbar.TabIndex = 1;
         //
-        // _miRemove
+        // _tbSyncAll
         //
-        this._miRemove.Name = "_miRemove";
-        this._miRemove.ShortcutKeys = System.Windows.Forms.Keys.Delete;
-        this._miRemove.Size = new System.Drawing.Size(280, 22);
-        this._miRemove.Text = "&Remove";
+        this._tbSyncAll.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+        this._tbSyncAll.Name = "_tbSyncAll";
+        this._tbSyncAll.Size = new System.Drawing.Size(60, 22);
+        this._tbSyncAll.Text = "Sync all";
+        this._tbSyncAll.ToolTipText = "Sync every emulator now (Ctrl+F5)";
         //
-        // _sepFolders
+        // _tbSyncSelected
         //
-        this._sepFolders.Name = "_sepFolders";
-        this._sepFolders.Size = new System.Drawing.Size(277, 6);
+        this._tbSyncSelected.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+        this._tbSyncSelected.Name = "_tbSyncSelected";
+        this._tbSyncSelected.Size = new System.Drawing.Size(90, 22);
+        this._tbSyncSelected.Text = "Sync selected";
+        this._tbSyncSelected.ToolTipText = "Sync the selected emulator (F5)";
         //
-        // _miSyncSelected
+        // _tbSep1
         //
-        this._miSyncSelected.Name = "_miSyncSelected";
-        this._miSyncSelected.ShortcutKeys = System.Windows.Forms.Keys.F5;
-        this._miSyncSelected.Size = new System.Drawing.Size(280, 22);
-        this._miSyncSelected.Text = "Sync se&lected";
+        this._tbSep1.Name = "_tbSep1";
+        this._tbSep1.Size = new System.Drawing.Size(6, 25);
         //
-        // _miSyncAll
+        // _tbAdd
         //
-        this._miSyncAll.Name = "_miSyncAll";
-        this._miSyncAll.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F5)));
-        this._miSyncAll.Size = new System.Drawing.Size(280, 22);
-        this._miSyncAll.Text = "Sync a&ll";
+        this._tbAdd.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+        this._tbAdd.Name = "_tbAdd";
+        this._tbAdd.Size = new System.Drawing.Size(95, 22);
+        this._tbAdd.Text = "Add emulator...";
         //
-        // _sepAuto
+        // _tbSetFolder
         //
-        this._sepAuto.Name = "_sepAuto";
-        this._sepAuto.Size = new System.Drawing.Size(277, 6);
+        this._tbSetFolder.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+        this._tbSetFolder.Name = "_tbSetFolder";
+        this._tbSetFolder.Size = new System.Drawing.Size(90, 22);
+        this._tbSetFolder.Text = "Local folder...";
+        this._tbSetFolder.ToolTipText = "Choose the save folder on this PC for the selected emulator";
         //
-        // _miAuto
+        // _tbRemove
         //
-        this._miAuto.CheckOnClick = true;
-        this._miAuto.Name = "_miAuto";
-        this._miAuto.Size = new System.Drawing.Size(280, 22);
-        this._miAuto.Text = "A&uto-sync when saves change";
+        this._tbRemove.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+        this._tbRemove.Name = "_tbRemove";
+        this._tbRemove.Size = new System.Drawing.Size(60, 22);
+        this._tbRemove.Text = "Remove";
         //
-        // _sepHistory
+        // _tbSep2
         //
-        this._sepHistory.Name = "_sepHistory";
-        this._sepHistory.Size = new System.Drawing.Size(277, 6);
+        this._tbSep2.Name = "_tbSep2";
+        this._tbSep2.Size = new System.Drawing.Size(6, 25);
         //
-        // _miHistory
+        // _tbHistory
         //
-        this._miHistory.Name = "_miHistory";
-        this._miHistory.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.H)));
-        this._miHistory.Size = new System.Drawing.Size(280, 22);
-        this._miHistory.Text = "Sync &history...";
-        //
-        // _settingsMenu
-        //
-        this._settingsMenu.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
-            this._miDetect,
-            this._sepAccount,
-            this._miChangeAccount,
-            this._miSignOut,
-            this._sepStartup,
-            this._miStartWithWindows});
-        this._settingsMenu.Name = "_settingsMenu";
-        this._settingsMenu.Size = new System.Drawing.Size(61, 20);
-        this._settingsMenu.Text = "S&ettings";
-        //
-        // _miDetect
-        //
-        this._miDetect.Name = "_miDetect";
-        this._miDetect.Size = new System.Drawing.Size(268, 22);
-        this._miDetect.Text = "&Detect emulators on this PC...";
-        //
-        // _sepAccount
-        //
-        this._sepAccount.Name = "_sepAccount";
-        this._sepAccount.Size = new System.Drawing.Size(265, 6);
-        //
-        // _miChangeAccount
-        //
-        this._miChangeAccount.Name = "_miChangeAccount";
-        this._miChangeAccount.Size = new System.Drawing.Size(268, 22);
-        this._miChangeAccount.Text = "Change &Google Drive account...";
-        //
-        // _miSignOut
-        //
-        this._miSignOut.Name = "_miSignOut";
-        this._miSignOut.Size = new System.Drawing.Size(268, 22);
-        this._miSignOut.Text = "Sign &out of EmuSync";
-        //
-        // _sepStartup
-        //
-        this._sepStartup.Name = "_sepStartup";
-        this._sepStartup.Size = new System.Drawing.Size(265, 6);
-        //
-        // _miStartWithWindows
-        //
-        this._miStartWithWindows.CheckOnClick = true;
-        this._miStartWithWindows.Name = "_miStartWithWindows";
-        this._miStartWithWindows.Size = new System.Drawing.Size(268, 22);
-        this._miStartWithWindows.Text = "Start with Windows";
+        this._tbHistory.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+        this._tbHistory.Name = "_tbHistory";
+        this._tbHistory.Size = new System.Drawing.Size(55, 22);
+        this._tbHistory.Text = "History";
+        this._tbHistory.ToolTipText = "What every device synced, and when (Ctrl+H)";
         //
         // _split
         //
         this._split.Dock = System.Windows.Forms.DockStyle.Fill;
-        this._split.Location = new System.Drawing.Point(0, 24);
+        this._split.Location = new System.Drawing.Point(0, 51);
         this._split.Name = "_split";
         this._split.Orientation = System.Windows.Forms.Orientation.Horizontal;
         //
@@ -264,9 +214,9 @@ partial class MainForm
         // _split.Panel2
         //
         this._split.Panel2.Controls.Add(this._log);
-        this._split.Size = new System.Drawing.Size(860, 465);
-        this._split.SplitterDistance = 230;
-        this._split.TabIndex = 1;
+        this._split.Size = new System.Drawing.Size(860, 438);
+        this._split.SplitterDistance = 215;
+        this._split.TabIndex = 2;
         //
         // _list
         //
@@ -280,7 +230,7 @@ partial class MainForm
         this._list.Location = new System.Drawing.Point(0, 0);
         this._list.MultiSelect = false;
         this._list.Name = "_list";
-        this._list.Size = new System.Drawing.Size(860, 230);
+        this._list.Size = new System.Drawing.Size(860, 215);
         this._list.TabIndex = 0;
         this._list.UseCompatibleStateImageBehavior = false;
         this._list.View = System.Windows.Forms.View.Details;
@@ -314,7 +264,7 @@ partial class MainForm
         this._log.Name = "_log";
         this._log.ReadOnly = true;
         this._log.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-        this._log.Size = new System.Drawing.Size(860, 231);
+        this._log.Size = new System.Drawing.Size(860, 219);
         this._log.TabIndex = 0;
         //
         // _statusBar
@@ -325,7 +275,7 @@ partial class MainForm
         this._statusBar.Location = new System.Drawing.Point(0, 489);
         this._statusBar.Name = "_statusBar";
         this._statusBar.Size = new System.Drawing.Size(860, 22);
-        this._statusBar.TabIndex = 2;
+        this._statusBar.TabIndex = 3;
         //
         // _lblAccount
         //
@@ -389,6 +339,7 @@ partial class MainForm
         this.ClientSize = new System.Drawing.Size(860, 511);
         this.Controls.Add(this._split);
         this.Controls.Add(this._statusBar);
+        this.Controls.Add(this._toolbar);
         this.Controls.Add(this._menu);
         this.MainMenuStrip = this._menu;
         this.MinimumSize = new System.Drawing.Size(760, 480);
@@ -397,6 +348,8 @@ partial class MainForm
         this.Text = "EmuSync – Emulator saves, synced";
         this._menu.ResumeLayout(false);
         this._menu.PerformLayout();
+        this._toolbar.ResumeLayout(false);
+        this._toolbar.PerformLayout();
         this._split.Panel1.ResumeLayout(false);
         this._split.Panel2.ResumeLayout(false);
         this._split.Panel2.PerformLayout();

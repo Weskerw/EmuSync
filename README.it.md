@@ -146,7 +146,10 @@ avviso "app non verificata" superabile con *Avanzate → Vai a EmuSync*.
 3. In seguito: **Sync → Add emulator...** per aggiungerne uno a mano,
    **Settings → Detect emulators on this PC...** per rifare la scansione,
    **Sync → Set local folder...** per collegare a una cartella locale un
-   emulatore configurato su un altro dispositivo.
+   emulatore configurato su un altro dispositivo, **Settings → Drive folder...**
+   per scegliere dove tenere i salvataggi su Drive (di default `EmuSync`;
+   cambiandola la cartella esistente viene spostata con dentro tutto, senza
+   ricaricare niente).
 4. Tutto il resto è automatico. Nel menu **Sync** restano comunque
    **Sync selected** (F5) e **Sync all** (Ctrl+F5); il log mostra ogni
    operazione.

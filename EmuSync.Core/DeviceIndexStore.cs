@@ -16,6 +16,13 @@ public class DeviceSnapshot
     public string EmulatorKey { get; set; } = "";
     public DateTime? TakenUtc { get; set; }
 
+    /// <summary>
+    /// Drive folder the snapshot was taken against. If the user later points
+    /// EmuSync at a different folder, the snapshot describes somewhere else and
+    /// must be ignored rather than acted on.
+    /// </summary>
+    public string RootPath { get; set; } = "";
+
     /// <summary>relative path ('/' separator) -> state at the last sync</summary>
     public Dictionary<string, SnapshotEntry> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

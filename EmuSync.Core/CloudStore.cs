@@ -12,6 +12,13 @@ public class CloudConfig
     /// <summary>How often (minutes) to poll the cloud for changes made elsewhere (0 = never).</summary>
     public int RemoteCheckMinutes { get; set; } = 15;
 
+    /// <summary>
+    /// Folder on Drive holding the saves, as a path from the root ("EmuSync",
+    /// "Games/Saves"). Shared by every device: they must all look in the same
+    /// place, or they would sync against different folders and never meet.
+    /// </summary>
+    public string DriveFolder { get; set; } = DrivePath.Default;
+
     /// <summary>The emulators the user wants to sync, in display order.</summary>
     public List<CloudEmulator> Emulators { get; set; } = new();
 
@@ -161,7 +168,8 @@ public class CloudStore
             Email = FirestoreClient.GetString(fields, "email", session.Email),
             DisplayName = FirestoreClient.GetString(fields, "displayName", session.DisplayName),
             AutoSync = FirestoreClient.GetBool(fields, "autoSync", true),
-            RemoteCheckMinutes = FirestoreClient.GetInt(fields, "remoteCheckMinutes", 15)
+            RemoteCheckMinutes = FirestoreClient.GetInt(fields, "remoteCheckMinutes", 15),
+            DriveFolder = DrivePath.Normalize(FirestoreClient.GetString(fields, "driveFolder", DrivePath.Default))
         };
 
         foreach (var item in FirestoreClient.GetList(fields, "emulators"))
@@ -192,6 +200,7 @@ public class CloudStore
             ["displayName"] = config.DisplayName,
             ["autoSync"] = config.AutoSync,
             ["remoteCheckMinutes"] = config.RemoteCheckMinutes,
+            ["driveFolder"] = config.DriveFolder,
             ["updatedUtc"] = DateTime.UtcNow,
             ["emulators"] = config.Emulators.Select(e => (object?)new Dictionary<string, object?>
             {

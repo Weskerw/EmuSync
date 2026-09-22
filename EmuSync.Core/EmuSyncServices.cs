@@ -26,7 +26,8 @@ public class EmuSyncServices : IDisposable
         Config = new CloudConfig
         {
             AutoSync = Local.AutoSync,
-            RemoteCheckMinutes = Local.RemoteCheckMinutes
+            RemoteCheckMinutes = Local.RemoteCheckMinutes,
+            DriveFolder = DrivePath.Normalize(Local.DriveFolder)
         };
     }
 
@@ -107,7 +108,8 @@ public class EmuSyncServices : IDisposable
         Config = new CloudConfig
         {
             AutoSync = Local.AutoSync,
-            RemoteCheckMinutes = Local.RemoteCheckMinutes
+            RemoteCheckMinutes = Local.RemoteCheckMinutes,
+            DriveFolder = DrivePath.Normalize(Local.DriveFolder)
         };
     }
 
@@ -252,7 +254,29 @@ public class EmuSyncServices : IDisposable
         Local.SetLocalPath(key, localPath);
     }
 
-    public SyncEngine CreateEngine() => new(Drive, Cloud, Local.DeviceId, Local.DeviceName);
+    public SyncEngine CreateEngine() =>
+        new(Drive, Cloud, Local.DeviceId, Local.DeviceName, Config.DriveFolder);
+
+    /// <summary>
+    /// Changes the Drive folder holding the saves. The existing folder is moved
+    /// and renamed rather than left behind, so nothing has to be re-uploaded and
+    /// the other devices find everything in place.
+    /// </summary>
+    public async Task<bool> SetDriveFolderAsync(string newPath, CancellationToken ct = default)
+    {
+        string normalized = DrivePath.Normalize(newPath);
+        if (string.Equals(normalized, Config.DriveFolder, StringComparison.OrdinalIgnoreCase)) return false;
+
+        await ConnectDriveAsync(ct);
+        bool moved = await Drive.MovePathAsync(Config.DriveFolder, normalized, ct);
+
+        Config.DriveFolder = normalized;
+        Local.DriveFolder = normalized;
+        Local.Save();
+        await Cloud.SaveConfigAsync(Config, ct);
+
+        return moved;
+    }
 
     /// <summary>The sync history of every device, newest first.</summary>
     public Task<List<SyncRunLog>> LoadHistoryAsync(int limit = 200, CancellationToken ct = default) =>

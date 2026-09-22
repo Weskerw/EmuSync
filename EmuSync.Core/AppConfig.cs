@@ -27,6 +27,9 @@ public class AppConfig
     /// <summary>How often (minutes) to check the cloud for changes (0 = never).</summary>
     public int RemoteCheckMinutes { get; set; } = 15;
 
+    /// <summary>Cached copy of the Drive folder holding the saves.</summary>
+    public string DriveFolder { get; set; } = DrivePath.Default;
+
     /// <summary>Cached emulator list, so the window is populated while Firestore loads.</summary>
     public List<CachedEmulator> Emulators { get; set; } = new();
 
@@ -102,6 +105,7 @@ public class AppConfig
     {
         AutoSync = cloud.AutoSync;
         RemoteCheckMinutes = cloud.RemoteCheckMinutes;
+        DriveFolder = cloud.DriveFolder;
         Emulators = profiles.Select(p => new CachedEmulator
         {
             Key = p.Key,

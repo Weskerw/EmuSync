@@ -3,9 +3,9 @@ using EmuSync.Core;
 namespace EmuSync;
 
 /// <summary>
-/// Main window. The visual part (menu, list, log, tray icon, timers) lives in
-/// MainForm.Designer.cs so it can be opened in the Visual Studio designer;
-/// this file only holds the behaviour.
+/// Main window: what is being synced, and what happened. The visual part (menu,
+/// toolbar, list, log, tray icon, timers) lives in MainForm.Designer.cs so it can
+/// be opened in the Visual Studio designer; this file only holds the behaviour.
 ///
 /// Two accounts are involved: the EmuSync account (Firebase — identity and
 /// configuration) and Google Drive (the save files). A Google sign-in covers
@@ -23,9 +23,10 @@ public partial class MainForm : Form
 
     /// <summary>Folders that changed while a sync was running (possibly by that very sync).</summary>
     private readonly HashSet<string> _changedDuringSync = new(StringComparer.OrdinalIgnoreCase);
+
     private DateTime _lastChangeUtc;
 
-    /// <summary>True while any long operation runs: greys out the menu.</summary>
+    /// <summary>True while any long operation runs: greys out the toolbar.</summary>
     private bool _syncing;
 
     /// <summary>
@@ -35,9 +36,6 @@ public partial class MainForm : Form
     /// mistaken for an echo of our own downloads.
     /// </summary>
     private bool _inSync;
-
-    /// <summary>Guards the auto-sync menu item against firing while we set it programmatically.</summary>
-    private bool _updatingAutoSyncItem;
 
     // When launched with --minimized (Start with Windows) the window stays
     // hidden and the app lives in the tray.
@@ -61,44 +59,24 @@ public partial class MainForm : Form
         _startMinimized = startMinimized;
         try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { /* keep default */ }
 
-        // --- "Sync" menu ---
-        _miAdd.Click += async (_, _) => await AddEmulatorAsync();
-        _miSetFolder.Click += async (_, _) => await SetLocalFolderAsync();
-        _miRemove.Click += async (_, _) => await RemoveEmulatorAsync();
-        _miSyncSelected.Click += async (_, _) => await SyncAsync(onlySelected: true);
-        _miSyncAll.Click += async (_, _) => await SyncAsync(onlySelected: false);
+        // --- menu ---
+        _miSettings.Click += async (_, _) => await ShowSettingsAsync();
+        _miExit.Click += (_, _) => Close();
 
-        _miAuto.Checked = _services.Config.AutoSync; // set before subscribing: no spurious log line
-        _miAuto.CheckedChanged += async (_, _) => await ToggleAutoSyncAsync();
+        // --- toolbar ---
+        _tbSyncAll.Click += async (_, _) => await SyncAsync(onlySelected: false);
+        _tbSyncSelected.Click += async (_, _) => await SyncAsync(onlySelected: true);
+        _tbAdd.Click += async (_, _) => await AddEmulatorAsync();
+        _tbSetFolder.Click += async (_, _) => await SetLocalFolderAsync();
+        _tbRemove.Click += async (_, _) => await RemoveEmulatorAsync();
+        _tbHistory.Click += async (_, _) => await ShowHistoryAsync();
 
-        _miHistory.Click += async (_, _) => await ShowHistoryAsync();
-
-        // --- "Settings" menu ---
-        _miDetect.Click += async (_, _) => await DetectEmulatorsAsync();
-        _miChangeAccount.Click += async (_, _) => await ChangeDriveAccountAsync();
-        _miSignOut.Click += (_, _) => SignOut();
-
-        _miStartWithWindows.Checked = StartupManager.IsEnabled();
-        _miStartWithWindows.CheckedChanged += (_, _) =>
-        {
-            try
-            {
-                StartupManager.SetEnabled(_miStartWithWindows.Checked);
-                Log(_miStartWithWindows.Checked
-                    ? "EmuSync will start automatically with Windows."
-                    : "Automatic startup with Windows disabled.");
-            }
-            catch (Exception ex)
-            {
-                Log("ERROR (startup setting): " + ex.Message);
-            }
-        };
+        _list.SelectedIndexChanged += (_, _) => UpdateToolbarState();
+        _list.DoubleClick += async (_, _) => await SetLocalFolderAsync();
 
         // Split the window evenly after layout: doing it in the designer may
         // exceed the container's limits at other DPI/sizes.
         Shown += (_, _) => { if (_split.Height > 120) _split.SplitterDistance = _split.Height / 2; };
-
-        _list.DoubleClick += async (_, _) => await SetLocalFolderAsync();
 
         RefreshList();
         RebuildWatchers();
@@ -107,7 +85,6 @@ public partial class MainForm : Form
         _autoSyncTimer.Tick += async (_, _) => await AutoSyncTickAsync();
         _autoSyncTimer.Start();
 
-        // Periodic cloud check to pick up changes made on other PCs.
         _remoteCheckTimer.Tick += async (_, _) => await RemoteCheckTickAsync();
         ApplyRemoteCheckInterval();
 
@@ -126,6 +103,27 @@ public partial class MainForm : Form
 
         // On startup: first-run wizard or sign-in if needed, then sync everything.
         Shown += async (_, _) => await StartupAsync();
+    }
+
+    /// <summary>Toolbar buttons cannot carry shortcuts, so the window handles them.</summary>
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        switch (keyData)
+        {
+            case Keys.F5:
+                _ = SyncAsync(onlySelected: true);
+                return true;
+            case Keys.Control | Keys.F5:
+                _ = SyncAsync(onlySelected: false);
+                return true;
+            case Keys.Control | Keys.H:
+                _ = ShowHistoryAsync();
+                return true;
+            case Keys.Control | Keys.N:
+                _ = AddEmulatorAsync();
+                return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     private void ShowFromTray()
@@ -182,7 +180,7 @@ public partial class MainForm : Form
                 using var login = new LoginForm(_services);
                 if (login.ShowDialog(this) != DialogResult.OK)
                 {
-                    Log("Sign-in skipped: use Settings > Sign out / sign in whenever you want to connect.");
+                    Log("Sign-in skipped: open Settings whenever you want to connect.");
                     return;
                 }
             }
@@ -201,7 +199,7 @@ public partial class MainForm : Form
 
             if (_services.Profiles.Count == 0)
             {
-                Log("No emulator configured yet: use Sync > Add emulator... or Settings > Detect emulators.");
+                Log("No emulator configured yet: use 'Add emulator...' or Settings > Emulators > Detect.");
                 return;
             }
 
@@ -230,9 +228,8 @@ public partial class MainForm : Form
             Log($"{linked} emulator(s) configured on another device were matched to folders on this PC.");
 
         foreach (var profile in _services.UnlinkedProfiles())
-            Log($"⚠ '{profile.DisplayName}' has no folder on this PC: select it and use Sync > Set local folder...");
+            Log($"⚠ '{profile.DisplayName}' has no folder on this PC: select it and use 'Local folder...'");
 
-        SetAutoSyncItem(_services.Config.AutoSync);
         ApplyRemoteCheckInterval(); // the cloud may carry a different period than the cache
         RefreshList();
         RebuildWatchers();
@@ -263,9 +260,9 @@ public partial class MainForm : Form
         UpdateStatusBar();
     }
 
-    // ---------------------------------------------------------------- account
+    // -------------------------------------------------------------- settings
 
-    private async Task ChangeDriveAccountAsync()
+    private async Task ShowSettingsAsync()
     {
         if (_syncing)
         {
@@ -274,78 +271,26 @@ public partial class MainForm : Form
             return;
         }
 
-        if (MessageBox.Show(this,
-                "Disconnect the current Google Drive account?\n" +
-                "Your browser will open to choose another one. Your EmuSync account stays the same.",
-                "EmuSync", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
-            return;
+        using var settings = new SettingsForm(_services, Log);
+        settings.ShowDialog(this);
 
-        SetBusy(true);
-        try
-        {
-            await _services.Drive.ReauthorizeAsync();
-            Log("Google Drive account changed.");
-            UpdateStatusBar();
+        if (!settings.ConfigurationChanged) return;
 
-            if (SyncableProfiles().Count > 0)
-            {
-                Log("Syncing with the new account...");
-                await RunSyncAsync(SyncableProfiles());
-            }
-        }
-        catch (Exception ex)
-        {
-            Log("ERROR: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "EmuSync", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            SetBusy(false);
-        }
-    }
-
-    private void SignOut()
-    {
-        if (MessageBox.Show(this,
-                "Sign out of EmuSync on this PC?\n" +
-                "Nothing is deleted: your settings stay in your account and your saves stay on Drive.",
-                "EmuSync", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
-            return;
-
-        _services.SignOut();
-        _dirtyKeys.Clear();
-        Log("Signed out.");
+        // Everything in there applies immediately; the window only has to catch up.
+        ApplyRemoteCheckInterval();
         RefreshList();
         RebuildWatchers();
         UpdateStatusBar();
+
+        await Task.CompletedTask;
     }
 
     // -------------------------------------------------------------- emulators
 
     private async Task AddEmulatorAsync()
     {
-        if (!await RequireSignInAsync()) return;
-
-        using var dlg = new AddEmulatorDialog(_services.Profiles.Select(p => p.Key));
-        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.SelectedEmulator == null) return;
-
-        SetBusy(true);
-        try
-        {
-            await _services.AddEmulatorAsync(dlg.SelectedEmulator, dlg.SelectedPath);
-            Log($"Added {dlg.SelectedEmulator.DisplayName} → {dlg.SelectedPath} (Drive: EmuSync/{dlg.SelectedEmulator.Key})");
-            RefreshList();
-            RebuildWatchers();
-        }
-        catch (Exception ex)
-        {
-            Log("ERROR: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "EmuSync", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            SetBusy(false);
-        }
+        if (_syncing || !await RequireSignInAsync()) return;
+        if (await EmulatorActions.AddAsync(this, _services, Log)) AfterEmulatorChange();
     }
 
     private async Task SetLocalFolderAsync()
@@ -356,58 +301,28 @@ public partial class MainForm : Form
         if (profile == null) return;
         if (!await RequireSignInAsync()) return;
 
-        using var dlg = new AddEmulatorDialog(Array.Empty<string>(), profile.Info);
-        if (profile.IsLinkedHere) dlg.SetFolder(profile.LocalPath);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
-
-        SetBusy(true);
-        try
-        {
-            await _services.SetLocalPathAsync(profile.Key, dlg.SelectedPath);
-            Log($"{profile.DisplayName}: local folder set to {dlg.SelectedPath}");
-            RefreshList();
-            RebuildWatchers();
-        }
-        catch (Exception ex)
-        {
-            Log("ERROR: " + ex.Message);
-        }
-        finally
-        {
-            SetBusy(false);
-        }
+        if (await EmulatorActions.SetFolderAsync(this, _services, profile, Log)) AfterEmulatorChange();
     }
 
     private async Task RemoveEmulatorAsync()
     {
+        if (_syncing) return;
+
         var profile = SelectedProfile();
         if (profile == null) return;
 
-        var answer = MessageBox.Show(this,
-            $"Stop syncing '{profile.DisplayName}'?\n\n" +
-            "Yes  = remove it from every device\n" +
-            "No   = only unlink it from this PC\n\n" +
-            "(Files on disk and on Drive are NOT touched.)",
-            "EmuSync", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
-        if (answer == DialogResult.Cancel) return;
-
-        SetBusy(true);
-        try
+        if (await EmulatorActions.RemoveAsync(this, _services, profile, Log))
         {
-            await _services.RemoveEmulatorAsync(profile.Key, everywhere: answer == DialogResult.Yes);
             _dirtyKeys.Remove(profile.Key);
-            Log($"Removed '{profile.DisplayName}'.");
-            RefreshList();
-            RebuildWatchers();
+            AfterEmulatorChange();
         }
-        catch (Exception ex)
-        {
-            Log("ERROR: " + ex.Message);
-        }
-        finally
-        {
-            SetBusy(false);
-        }
+    }
+
+    private void AfterEmulatorChange()
+    {
+        RefreshList();
+        RebuildWatchers();
+        UpdateStatusBar();
     }
 
     private async Task ShowHistoryAsync()
@@ -416,79 +331,6 @@ public partial class MainForm : Form
 
         using var history = new HistoryForm(_services);
         history.ShowDialog(this);
-    }
-
-    private async Task DetectEmulatorsAsync()
-    {
-        if (!await RequireSignInAsync()) return;
-
-        SetBusy(true);
-        try
-        {
-            var detected = _services.DetectNewEmulators();
-            if (detected.Count == 0)
-            {
-                MessageBox.Show(this, "No new emulator found on this PC.", "EmuSync",
-                    MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-
-            string list = string.Join("\n", detected.Select(d => $"• {d.Emulator.DisplayName} → {d.LocalPath}"));
-            if (MessageBox.Show(this, $"Found {detected.Count} emulator(s):\n\n{list}\n\nAdd them to sync?",
-                    "EmuSync", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK)
-                return;
-
-            foreach (var item in detected)
-                await _services.AddEmulatorAsync(item.Emulator, item.LocalPath);
-
-            Log($"{detected.Count} emulator(s) added.");
-            RefreshList();
-            RebuildWatchers();
-        }
-        catch (Exception ex)
-        {
-            Log("ERROR: " + ex.Message);
-            MessageBox.Show(this, ex.Message, "EmuSync", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
-        finally
-        {
-            SetBusy(false);
-        }
-    }
-
-    /// <summary>Sets the menu item without it looking like the user clicked it.</summary>
-    private void SetAutoSyncItem(bool enabled)
-    {
-        if (_miAuto.Checked == enabled) return;
-        _updatingAutoSyncItem = true;
-        try { _miAuto.Checked = enabled; }
-        finally { _updatingAutoSyncItem = false; }
-    }
-
-    private async Task ToggleAutoSyncAsync()
-    {
-        if (_updatingAutoSyncItem) return; // reflecting the cloud value, not a user choice
-
-        Log(_miAuto.Checked ? "Auto-sync enabled." : "Auto-sync disabled.");
-
-        // Config is the single source of truth the timers read, so update it even
-        // when there is nobody to save it to yet.
-        _services.Config.AutoSync = _miAuto.Checked;
-
-        try
-        {
-            if (_services.IsSignedIn)
-                await _services.SaveSettingsAsync(_miAuto.Checked, _services.Config.RemoteCheckMinutes);
-            else
-            {
-                _services.Local.AutoSync = _miAuto.Checked;
-                _services.Local.Save();
-            }
-        }
-        catch (Exception ex)
-        {
-            Log("ERROR saving the setting: " + ex.Message);
-        }
     }
 
     // ------------------------------------------------------------- automation
@@ -634,7 +476,7 @@ public partial class MainForm : Form
             if (!profile.IsLinkedHere)
             {
                 MessageBox.Show(this, $"'{profile.DisplayName}' has no local folder on this PC.\n" +
-                                      "Use Sync > Set local folder... first.", "EmuSync",
+                                      "Use 'Local folder...' first.", "EmuSync",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -747,7 +589,7 @@ public partial class MainForm : Form
                     if (!canPrompt)
                     {
                         _needsSignIn = true;
-                        Log("Sign in again with Sync > Sync all to resume automatic syncing.");
+                        Log("Sign in again with 'Sync all' to resume automatic syncing.");
                         NotifySignInRequired();
                         abort = true;
                         break;
@@ -833,14 +675,30 @@ public partial class MainForm : Form
             if (!profile.IsLinkedHere) item.ForeColor = SystemColors.GrayText;
             _list.Items.Add(item);
         }
+
+        UpdateToolbarState();
+    }
+
+    /// <summary>Greys out what needs a selection, or a sync that is not already running.</summary>
+    private void UpdateToolbarState()
+    {
+        bool selected = _list.SelectedItems.Count > 0;
+        _tbSyncSelected.Enabled = !_syncing && selected;
+        _tbSetFolder.Enabled = !_syncing && selected;
+        _tbRemove.Enabled = !_syncing && selected;
+        _tbSyncAll.Enabled = !_syncing;
+        _tbAdd.Enabled = !_syncing;
+        _traySyncAll.Enabled = !_syncing;
     }
 
     private void UpdateStatusBar()
     {
         _lblAccount.Text = _services.IsSignedIn ? $"Account: {_services.AccountLabel}" : "Not signed in";
-        _lblDrive.Text = _services.Drive.IsConnected
-            ? "Drive: connected"
-            : _services.Drive.HasStoredToken ? "Drive: authorized" : "Drive: not connected";
+
+        string state = _services.Drive.IsConnected
+            ? "connected"
+            : _services.Drive.HasStoredToken ? "authorized" : "not connected";
+        _lblDrive.Text = $"Drive: {state} · folder {_services.Config.DriveFolder}";
     }
 
     private void NotifySignInRequired()
@@ -849,7 +707,7 @@ public partial class MainForm : Form
         try
         {
             _tray.BalloonTipTitle = "EmuSync";
-            _tray.BalloonTipText = "The sign-in has expired. Open EmuSync and choose Sync > Sync all.";
+            _tray.BalloonTipText = "The sign-in has expired. Open EmuSync and press 'Sync all'.";
             _tray.BalloonTipIcon = ToolTipIcon.Warning;
             _tray.ShowBalloonTip(10000);
         }
@@ -859,8 +717,7 @@ public partial class MainForm : Form
     private void SetBusy(bool busy)
     {
         _syncing = busy;
-        foreach (var mi in new[] { _miAdd, _miSetFolder, _miRemove, _miSyncSelected, _miSyncAll, _miDetect, _traySyncAll })
-            mi.Enabled = !busy;
+        UpdateToolbarState();
         UseWaitCursor = busy;
     }
 

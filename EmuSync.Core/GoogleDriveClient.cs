@@ -6,6 +6,60 @@ using DriveFile = Google.Apis.Drive.v3.Data.File;
 
 namespace EmuSync.Core;
 
+/// <summary>
+/// The path of the root folder on Drive, as the user types it: one or more
+/// folder names separated by '/', starting from "My Drive".
+///
+/// EmuSync can only ever see folders it created itself (the <c>drive.file</c>
+/// scope), so there is no way to offer a picker over the user's existing Drive:
+/// the path is typed, and every segment is created by the app.
+/// </summary>
+public static class DrivePath
+{
+    public const string Default = "EmuSync";
+
+    /// <summary>Characters Drive itself rejects or that would break the path syntax.</summary>
+    private static readonly char[] Invalid = { '/', '\\', ':', '*', '?', '"', '<', '>', '|' };
+
+    /// <summary>
+    /// Cleans up what the user typed: accepts backslashes, drops empty segments
+    /// and trims each name. Returns the default when nothing usable is left.
+    /// </summary>
+    public static string Normalize(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return Default;
+
+        var segments = path.Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .Where(s => s.Length > 0)
+            .ToList();
+
+        return segments.Count == 0 ? Default : string.Join('/', segments);
+    }
+
+    /// <summary>Explains why a path cannot be used, or null when it is fine.</summary>
+    public static string? Validate(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "Enter a folder name.";
+
+        foreach (string segment in path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string name = segment.Trim();
+            if (name.Length == 0) continue;
+            if (name is "." or "..") return "'.' and '..' cannot be used as folder names.";
+            if (name.IndexOfAny(Invalid) >= 0)
+                return "A folder name cannot contain : * ? \" < > |";
+            if (name.Length > 200) return "Folder names must be shorter than 200 characters.";
+        }
+
+        return Normalize(path).Length == 0 ? "Enter a folder name." : null;
+    }
+
+    public static string[] Segments(string path) =>
+        Normalize(path).Split('/', StringSplitOptions.RemoveEmptyEntries);
+}
+
 /// <summary>Information about a remote file on Drive.</summary>
 public class RemoteFile
 {
@@ -149,6 +203,88 @@ public class GoogleDriveClient : IDisposable
         create.Fields = "id";
         var created = await create.ExecuteAsync(ct);
         return created.Id;
+    }
+
+    /// <summary>Looks for a folder without creating it. Returns null when it does not exist.</summary>
+    public async Task<string?> FindFolderAsync(string name, string? parentId, CancellationToken ct = default)
+    {
+        string parentClause = parentId == null ? "'root' in parents" : $"'{parentId}' in parents";
+        var list = Service.Files.List();
+        list.Q = $"name = '{Escape(name)}' and mimeType = '{FolderMime}' and {parentClause} and trashed = false";
+        list.Fields = "files(id, name)";
+        list.PageSize = 10;
+        var result = await list.ExecuteAsync(ct);
+        return result.Files is { Count: > 0 } ? result.Files[0].Id : null;
+    }
+
+    /// <summary>Finds or creates every folder in a path ("Games/Saves"), returning the last one's id.</summary>
+    public async Task<string> EnsurePathAsync(string path, CancellationToken ct = default)
+    {
+        string? parentId = null;
+        foreach (string segment in DrivePath.Segments(path))
+            parentId = await EnsureFolderAsync(segment, parentId, ct);
+
+        return parentId!; // Segments() never returns an empty sequence
+    }
+
+    /// <summary>
+    /// Resolves a path without creating anything: null as soon as a segment is
+    /// missing. Also reports the parent of the last segment, which is what a move
+    /// needs.
+    /// </summary>
+    public async Task<(string? Id, string? ParentId)> FindPathAsync(string path, CancellationToken ct = default)
+    {
+        var segments = DrivePath.Segments(path);
+        string? parentId = null;
+        string? currentId = null;
+
+        for (int i = 0; i < segments.Length; i++)
+        {
+            currentId = await FindFolderAsync(segments[i], parentId, ct);
+            if (currentId == null) return (null, null);
+            if (i < segments.Length - 1) parentId = currentId;
+        }
+
+        return (currentId, parentId);
+    }
+
+    /// <summary>
+    /// Moves (and renames) the root folder from one path to another, so changing
+    /// where the saves live does not mean re-uploading them. Returns true when an
+    /// existing folder was actually moved.
+    /// </summary>
+    public async Task<bool> MovePathAsync(string oldPath, string newPath, CancellationToken ct = default)
+    {
+        var (folderId, oldParentId) = await FindPathAsync(oldPath, ct);
+        if (folderId == null)
+        {
+            // Nothing to move (first run, or the user tidied up on Drive): just
+            // make sure the destination exists.
+            await EnsurePathAsync(newPath, ct);
+            return false;
+        }
+
+        var newSegments = DrivePath.Segments(newPath);
+        string? newParentId = null;
+        for (int i = 0; i < newSegments.Length - 1; i++)
+            newParentId = await EnsureFolderAsync(newSegments[i], newParentId, ct);
+
+        var meta = new DriveFile { Name = newSegments[^1] };
+        var request = Service.Files.Update(meta, folderId);
+        request.Fields = "id, parents";
+
+        // Drive has no "move": the parent list is edited instead. Passing 'root'
+        // explicitly covers a folder that currently sits at the top level.
+        string effectiveOldParent = oldParentId ?? "root";
+        string effectiveNewParent = newParentId ?? "root";
+        if (!string.Equals(effectiveOldParent, effectiveNewParent, StringComparison.Ordinal))
+        {
+            request.AddParents = effectiveNewParent;
+            request.RemoveParents = effectiveOldParent;
+        }
+
+        await request.ExecuteAsync(ct);
+        return true;
     }
 
     /// <summary>Recursively lists files and subfolders of folderId.</summary>

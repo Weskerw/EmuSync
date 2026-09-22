@@ -137,7 +137,10 @@ can bypass via *Advanced → Go to EmuSync*.
    EmuSync found on the PC.
 3. Later: **Sync → Add emulator...** to add one by hand, **Settings → Detect
    emulators on this PC...** to rescan, **Sync → Set local folder...** to point an
-   emulator configured on another device at a folder here.
+   emulator configured on another device at a folder here, **Settings → Drive
+   folder...** to choose where the saves live on Drive (default `EmuSync`;
+   changing it moves the existing folder, saves included, rather than starting
+   over).
 4. Everything else is automatic. The **Sync** menu still has manual **Sync
    selected** (F5) and **Sync all** (Ctrl+F5); the log shows every operation.
 
