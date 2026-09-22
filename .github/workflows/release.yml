@@ -44,17 +44,45 @@ jobs:
           # Never print the file: it now contains the secret.
           Write-Host "Credentials injected."
 
+      # The Firebase settings live in emusync-firebase.json, which is git-ignored,
+      # so a released build has to carry them inside the executable instead.
+      # The API key is not a secret (every Firebase web app ships it in the clear);
+      # it is kept as a repository secret only so a fork points at its own project.
+      - name: Inject Firebase settings
+        shell: pwsh
+        env:
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          if (-not $env:FIREBASE_API_KEY) {
+            throw "Missing FIREBASE_API_KEY repository secret: the app would start unconfigured."
+          }
+          $path = 'EmuSync.Core/FirebaseOptions.cs'
+          $text = Get-Content $path -Raw
+          $text = $text -replace 'EmbeddedApiKey = ""', ('EmbeddedApiKey = "' + $env:FIREBASE_API_KEY + '"')
+          if ($env:FIREBASE_PROJECT_ID) {
+            $text = $text -replace 'EmbeddedProjectId = "[^"]*"',
+                                   ('EmbeddedProjectId = "' + $env:FIREBASE_PROJECT_ID + '"')
+          }
+          Set-Content $path $text -NoNewline
+          Write-Host "Firebase settings injected."
+
       - name: Publish (self-contained, single file, win-x64)
-        run: >
-          dotnet publish EmuSync/EmuSync.csproj
-          -c Release
-          -r win-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:EnableCompressionInSingleFile=true
-          -p:DebugType=none
-          -o publish
+        shell: pwsh
+        run: |
+          # Tags look like v1.2.3; the assembly version wants 1.2.3.
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          if ($version -notmatch '^\d+(\.\d+){0,3}$') { $version = '1.0.0' }
+          dotnet publish EmuSync/EmuSync.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:DebugType=none `
+            -p:Version=$version `
+            -o publish
 
       - name: Package
         shell: pwsh
